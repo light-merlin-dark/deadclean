@@ -1,13 +1,7 @@
-```
-██████╗ ███████╗ █████╗ ██████╗  ██████╗██╗     ███████╗ █████╗ ███╗   ██╗
-██╔══██╗██╔════╝██╔══██╗██╔══██╗██╔════╝██║     ██╔════╝██╔══██╗████╗  ██║
-██║  ██║█████╗  ███████║██║  ██║██║     ██║     █████╗  ███████║██╔██╗ ██║
-██║  ██║██╔══╝  ██╔══██║██║  ██║██║     ██║     ██╔══╝  ██╔══██║██║╚██╗██║
-██████╔╝███████╗██║  ██║██████╔╝╚██████╗███████╗███████╗██║  ██║██║ ╚████║
-╚═════╝ ╚══════╝╚═╝  ╚═╝╚═════╝  ╚═════╝╚══════╝╚══════╝╚═╝  ╚═╝╚═╝  ╚═══╝
-
-Safe dead-code cleanup for AI coding sessions
-Ruff + Vulture wrapper • Agent-friendly output • Install-method aware
+```text
+deadclean
+safe dead-code cleanup for AI coding sessions
+ruff + vulture wrapper | agent-friendly output | install-method aware
 ```
 
 ## Why?
