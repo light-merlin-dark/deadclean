@@ -1,0 +1,59 @@
+{
+  "name": "@light-merlin-dark/deadclean",
+  "version": "0.1.0",
+  "description": "AI-friendly CLI wrapper for safe dead code cleanup with Ruff + Vulture.",
+  "main": "dist/index.js",
+  "bin": {
+    "deadclean": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "dev": "bun run src/index.ts",
+    "test": "bun test tests",
+    "test:silent": "bun test tests 2>/dev/null",
+    "lint": "tsc --noEmit",
+    "check": "npm run lint && npm run test && npm run build",
+    "prepublishOnly": "npm run check"
+  },
+  "keywords": [
+    "ai",
+    "ai-agents",
+    "cli",
+    "python",
+    "ruff",
+    "vulture",
+    "dead-code",
+    "static-analysis",
+    "code-quality",
+    "developer-tools"
+  ],
+  "author": "Merlin",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/light-merlin-dark/deadclean.git"
+  },
+  "homepage": "https://github.com/light-merlin-dark/deadclean#readme",
+  "bugs": {
+    "url": "https://github.com/light-merlin-dark/deadclean/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.6.0",
+    "typescript": "^5.9.3"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "SKILL.md",
+    "docs"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

@@ -1,0 +1,35 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+*.tsbuildinfo
+
+# logs and artifacts
+*.log
+coverage/
+artifacts/
+
+# environment
+.env
+.env.*
+!.env.example
+
+# editor/OS
+.DS_Store
+.vscode/
+.idea/
+
+# python caches from example runs
+__pycache__/
+*.pyc
+.ruff_cache/
+.vulture/
+
+# docs local artifacts (keep docs content tracked)
+docs/.cache/
+docs/.tmp/
+docs/_site/
+
+# temporary
+.tmp/
