@@ -46,32 +46,35 @@ export function formatScanText(report: ScanReport): string {
 
   lines.push("deadclean scan");
   lines.push(`path: ${report.path}`);
-  lines.push(`ruff_issues: ${report.ruffIssueCount}`);
-  lines.push(`ruff_fixed: ${report.ruffFixedCount}`);
-  lines.push(`vulture_findings: ${report.vultureFindingCount}`);
+  lines.push(`language: ${report.language}`);
+  lines.push(`lint_tool: ${report.lintTool}`);
+  lines.push(`dead_code_tool: ${report.deadCodeTool}`);
+  lines.push(`lint_issues: ${report.lintIssueCount}`);
+  lines.push(`auto_fixed: ${report.fixedCount}`);
+  lines.push(`dead_code_findings: ${report.deadCodeFindingCount}`);
   lines.push(`elapsed_ms: ${report.elapsedMs}`);
 
   lines.push(...formatInstallReport(report.install));
 
-  if (report.vultureFindings.length > 0) {
-    lines.push("vulture_report:");
-    for (const finding of report.vultureFindings) {
-      lines.push(`  - ${finding.file}:${finding.line} ${finding.message}`);
+  if (report.deadCodeFindings.length > 0) {
+    lines.push("dead_code_report:");
+    for (const finding of report.deadCodeFindings) {
+      lines.push(`  - ${finding}`);
     }
   } else {
-    lines.push("vulture_report:");
+    lines.push("dead_code_report:");
     lines.push("  - none");
   }
 
   if (report.options.verbose) {
-    lines.push("ruff_output:");
-    lines.push(displayOutput(report.ruffCheck) || "(no output)");
-    lines.push("vulture_output:");
-    lines.push(displayOutput(report.vultureCheck) || "(no output)");
+    lines.push("lint_output:");
+    lines.push(displayOutput(report.lintResult) || "(no output)");
+    lines.push("dead_code_output:");
+    lines.push(displayOutput(report.deadCodeResult) || "(no output)");
   }
 
   lines.push("next:");
-  lines.push("  - Review Vulture findings before deleting code.");
+  lines.push("  - Review dead-code findings before deleting code.");
   lines.push("  - Use --strict in CI to fail on remaining findings.");
 
   return `${lines.join("\n")}\n`;

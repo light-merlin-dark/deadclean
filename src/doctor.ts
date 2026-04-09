@@ -1,16 +1,12 @@
 import { platform } from "node:os";
 import { RealCommandRunner } from "./process";
-import { inspectRequiredTools, inspectTool } from "./install";
-import type { CommandRunner, DoctorReport } from "./types";
+import { inspectAllTools, inspectTool } from "./install";
+import type { CommandRunner, DoctorReport, ToolBinaries } from "./types";
 
-export async function buildDoctorReport(
-  runner: CommandRunner,
-  ruffBinary: string,
-  vultureBinary: string
-): Promise<DoctorReport> {
+export async function buildDoctorReport(runner: CommandRunner, binaries: ToolBinaries): Promise<DoctorReport> {
   const [bun, tools] = await Promise.all([
     inspectTool(runner, "bun"),
-    inspectRequiredTools(runner, ruffBinary, vultureBinary)
+    inspectAllTools(runner, binaries)
   ]);
 
   return {
@@ -22,7 +18,7 @@ export async function buildDoctorReport(
   };
 }
 
-export async function runDoctor(ruffBinary: string, vultureBinary: string): Promise<DoctorReport> {
+export async function runDoctor(binaries: ToolBinaries): Promise<DoctorReport> {
   const runner = new RealCommandRunner();
-  return buildDoctorReport(runner, ruffBinary, vultureBinary);
+  return buildDoctorReport(runner, binaries);
 }

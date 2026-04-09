@@ -1,8 +1,17 @@
 import { platform } from "node:os";
 import { displayOutput } from "./process";
-import type { CommandResult, CommandRunner, InstallAttempt, InstallMethod, InstallReport, ToolStatus } from "./types";
+import type {
+  CommandResult,
+  CommandRunner,
+  InstallAttempt,
+  InstallMethod,
+  InstallReport,
+  ProjectLanguage,
+  ToolBinaries,
+  ToolStatus
+} from "./types";
 
-const INSTALL_ORDER: InstallMethod[] = ["uv", "pipx", "pip"];
+const PYTHON_INSTALL_ORDER: InstallMethod[] = ["uv", "pipx", "pip"];
 
 function parseVersion(output: string): string | null {
   const trimmed = output.trim();
@@ -40,17 +49,35 @@ export async function inspectTool(runner: CommandRunner, binary: string): Promis
   };
 }
 
-export async function inspectRequiredTools(
+export async function inspectLanguageTools(
   runner: CommandRunner,
-  ruffBinary: string,
-  vultureBinary: string
+  language: ProjectLanguage,
+  binaries: ToolBinaries
 ): Promise<ToolStatus[]> {
-  const [ruff, vulture] = await Promise.all([
-    inspectTool(runner, ruffBinary),
-    inspectTool(runner, vultureBinary)
+  if (language === "python") {
+    const [ruff, vulture] = await Promise.all([
+      inspectTool(runner, binaries.ruffBinary),
+      inspectTool(runner, binaries.vultureBinary)
+    ]);
+    return [ruff, vulture];
+  }
+
+  const [biome, knip] = await Promise.all([
+    inspectTool(runner, binaries.biomeBinary),
+    inspectTool(runner, binaries.knipBinary)
+  ]);
+  return [biome, knip];
+}
+
+export async function inspectAllTools(runner: CommandRunner, binaries: ToolBinaries): Promise<ToolStatus[]> {
+  const [ruff, vulture, biome, knip] = await Promise.all([
+    inspectTool(runner, binaries.ruffBinary),
+    inspectTool(runner, binaries.vultureBinary),
+    inspectTool(runner, binaries.biomeBinary),
+    inspectTool(runner, binaries.knipBinary)
   ]);
 
-  return [ruff, vulture];
+  return [ruff, vulture, biome, knip];
 }
 
 function isSuccess(result: CommandResult): boolean {
@@ -157,18 +184,24 @@ async function installWithPip(runner: CommandRunner): Promise<InstallAttempt> {
 }
 
 export function installCandidates(method: InstallMethod): InstallMethod[] {
-  return method === "auto" ? INSTALL_ORDER : [method];
+  if (method === "auto") {
+    return PYTHON_INSTALL_ORDER;
+  }
+  if (method === "uv" || method === "pipx" || method === "pip") {
+    return [method];
+  }
+  return [];
 }
 
-export async function ensureToolsInstalled(
+async function ensurePythonToolsInstalled(
   runner: CommandRunner,
   method: InstallMethod,
-  ruffBinary: string,
-  vultureBinary: string
+  binaries: ToolBinaries
 ): Promise<InstallReport> {
-  const current = await inspectRequiredTools(runner, ruffBinary, vultureBinary);
+  const current = await inspectLanguageTools(runner, "python", binaries);
   if (current.every((tool) => tool.installed)) {
     return {
+      language: "python",
       success: true,
       methodRequested: method,
       methodUsed: null,
@@ -185,6 +218,22 @@ export async function ensureToolsInstalled(
   const attempts: InstallAttempt[] = [];
   const candidates = installCandidates(method);
 
+  if (candidates.length === 0) {
+    return {
+      language: "python",
+      success: false,
+      methodRequested: method,
+      methodUsed: null,
+      attempts: [
+        {
+          method,
+          success: false,
+          details: "Invalid Python install method. Use auto, uv, pipx, or pip."
+        }
+      ]
+    };
+  }
+
   for (const candidate of candidates) {
     let attempt: InstallAttempt;
 
@@ -199,9 +248,10 @@ export async function ensureToolsInstalled(
     attempts.push(attempt);
 
     if (attempt.success) {
-      const postCheck = await inspectRequiredTools(runner, ruffBinary, vultureBinary);
+      const postCheck = await inspectLanguageTools(runner, "python", binaries);
       if (postCheck.every((tool) => tool.installed)) {
         return {
+          language: "python",
           success: true,
           methodRequested: method,
           methodUsed: candidate,
@@ -218,9 +268,122 @@ export async function ensureToolsInstalled(
   }
 
   return {
+    language: "python",
     success: false,
     methodRequested: method,
     methodUsed: null,
     attempts
   };
+}
+
+async function ensureTypeScriptToolsInstalled(
+  runner: CommandRunner,
+  method: InstallMethod,
+  binaries: ToolBinaries
+): Promise<InstallReport> {
+  const current = await inspectLanguageTools(runner, "typescript", binaries);
+  if (current.every((tool) => tool.installed)) {
+    return {
+      language: "typescript",
+      success: true,
+      methodRequested: method,
+      methodUsed: null,
+      attempts: [
+        {
+          method,
+          success: true,
+          details: "Biome and Knip are already installed"
+        }
+      ]
+    };
+  }
+
+  if (method !== "auto" && method !== "npm") {
+    return {
+      language: "typescript",
+      success: false,
+      methodRequested: method,
+      methodUsed: null,
+      attempts: [
+        {
+          method,
+          success: false,
+          details: "TypeScript tool installation supports only auto or npm."
+        }
+      ]
+    };
+  }
+
+  const npmCheck = await runner.run("npm", ["--version"]);
+  if (!isSuccess(npmCheck)) {
+    return {
+      language: "typescript",
+      success: false,
+      methodRequested: method,
+      methodUsed: null,
+      attempts: [
+        {
+          method: "npm",
+          success: false,
+          details: "npm is not installed"
+        }
+      ]
+    };
+  }
+
+  const installResult = await runner.run("npm", ["install", "-g", "@biomejs/biome", "knip"]);
+  const attempt: InstallAttempt = {
+    method: "npm",
+    success: installResult.exitCode === 0,
+    details: installResult.exitCode === 0 ? "Installed Biome and Knip using npm" : displayOutput(installResult)
+  };
+
+  if (!attempt.success) {
+    return {
+      language: "typescript",
+      success: false,
+      methodRequested: method,
+      methodUsed: null,
+      attempts: [attempt]
+    };
+  }
+
+  const postCheck = await inspectLanguageTools(runner, "typescript", binaries);
+  if (postCheck.every((tool) => tool.installed)) {
+    return {
+      language: "typescript",
+      success: true,
+      methodRequested: method,
+      methodUsed: "npm",
+      attempts: [attempt]
+    };
+  }
+
+  return {
+    language: "typescript",
+    success: false,
+    methodRequested: method,
+    methodUsed: null,
+    attempts: [
+      attempt,
+      {
+        method: "npm",
+        success: false,
+        details: "Install command succeeded but tools are still unavailable in PATH"
+      }
+    ]
+  };
+}
+
+export async function ensureToolsInstalled(
+  runner: CommandRunner,
+  language: ProjectLanguage,
+  method: InstallMethod,
+  binaries: ToolBinaries
+): Promise<InstallReport> {
+  if (language === "python") {
+    return ensurePythonToolsInstalled(runner, method, binaries);
+  }
+
+  return ensureTypeScriptToolsInstalled(runner, method, binaries);
 }

@@ -3,6 +3,8 @@ import type { CommandResult, VultureFinding } from "./types";
 const RUFF_SUMMARY_PATTERN = /Found\s+(\d+)\s+errors?/i;
 const RUFF_FIXED_PATTERN = /\((\d+)\s+fixed,\s*(\d+)\s+remaining\)/i;
 const RUFF_PATH_LINE_PATTERN = /^.+:\d+:\d+:/;
+const BIOME_SUMMARY_PATTERN = /Found\s+(\d+)\s+(error|errors|diagnostic|diagnostics)/i;
+const BIOME_FIXED_PATTERN = /Applied\s+(\d+)\s+fix(?:es)?/i;
 
 export function parseRuffIssueCount(result: CommandResult): number {
   const output = `${result.stdout}\n${result.stderr}`;
@@ -63,4 +65,50 @@ export function parseVultureFindings(result: CommandResult): VultureFinding[] {
       };
     })
     .filter((finding): finding is VultureFinding => finding !== null);
+}
+
+export function parseBiomeIssueCount(result: CommandResult): number {
+  const output = `${result.stdout}\n${result.stderr}`;
+  const summaryMatch = output.match(BIOME_SUMMARY_PATTERN);
+  if (summaryMatch) {
+    return Number(summaryMatch[1]);
+  }
+
+  if (output.includes("Checked") && output.includes("No fixes applied")) {
+    return 0;
+  }
+
+  if (output.includes("Checked") && output.includes("No issues found")) {
+    return 0;
+  }
+
+  return result.exitCode === 0 ? 0 : 1;
+}
+
+export function parseBiomeFixedCount(result: CommandResult): number {
+  const output = `${result.stdout}\n${result.stderr}`;
+  const match = output.match(BIOME_FIXED_PATTERN);
+  if (match) {
+    return Number(match[1]);
+  }
+
+  if (output.includes("No fixes applied")) {
+    return 0;
+  }
+
+  return 0;
+}
+
+export function parseKnipFindings(result: CommandResult): string[] {
+  const output = `${result.stdout}\n${result.stderr}`.trim();
+  if (!output) {
+    return [];
+  }
+
+  return output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .filter((line) => !line.startsWith("Unused"))
+    .filter((line) => !line.startsWith("Configuration hints"));
 }

@@ -1,26 +1,37 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { formatDoctorText, formatJson, formatScanText } from "./format";
 import { runDoctor } from "./doctor";
+import { formatDoctorText, formatJson, formatScanText } from "./format";
 import { ensureToolsInstalled } from "./install";
+import { detectProjectLanguage } from "./language";
 import { RealCommandRunner } from "./process";
 import { runScan } from "./scan";
-import type { InstallMethod, OutputMode, ScanOptions } from "./types";
+import type {
+  InstallMethod,
+  LanguageMode,
+  OutputMode,
+  ProjectLanguage,
+  ScanOptions,
+  ToolBinaries
+} from "./types";
 
-const VALID_INSTALL_METHODS: InstallMethod[] = ["auto", "uv", "pipx", "pip"];
+const VALID_INSTALL_METHODS: InstallMethod[] = ["auto", "uv", "pipx", "pip", "npm"];
+const VALID_LANGUAGES: LanguageMode[] = ["auto", "python", "typescript"];
+const VALID_INSTALL_LANGUAGES: Array<LanguageMode | "all"> = ["auto", "python", "typescript", "all"];
 
-interface BaseOptions {
+interface BaseOptions extends ToolBinaries {
   output: OutputMode;
-  ruffBinary: string;
-  vultureBinary: string;
 }
 
 interface InstallOptions extends BaseOptions {
   installMethod: InstallMethod;
+  language: LanguageMode | "all";
+  path: string;
 }
 
 const DEFAULT_SCAN_OPTIONS: ScanOptions = {
   path: ".",
+  language: "auto",
   fix: false,
   minConfidence: 100,
   ensureTools: false,
@@ -29,7 +40,9 @@ const DEFAULT_SCAN_OPTIONS: ScanOptions = {
   strict: false,
   verbose: false,
   ruffBinary: "ruff",
-  vultureBinary: "vulture"
+  vultureBinary: "vulture",
+  biomeBinary: "biome",
+  knipBinary: "knip"
 };
 
 function packageVersion(): string {
@@ -41,38 +54,43 @@ function packageVersion(): string {
 
 function printHelp(): void {
   process.stdout.write(`deadclean ${packageVersion()}\n\n`);
-  process.stdout.write("AI-friendly dead code cleanup with Ruff + Vulture.\n\n");
+  process.stdout.write("AI-friendly dead code cleanup for Python and TypeScript projects.\n\n");
   process.stdout.write("Usage:\n");
   process.stdout.write("  deadclean [path] [options]\n");
   process.stdout.write("  deadclean scan [path] [options]\n");
   process.stdout.write("  deadclean doctor [options]\n");
-  process.stdout.write("  deadclean install-tools [options]\n\n");
+  process.stdout.write("  deadclean install-tools [path] [options]\n\n");
 
   process.stdout.write("Commands:\n");
-  process.stdout.write("  scan           Run Ruff + Vulture scan (default command)\n");
+  process.stdout.write("  scan           Run language-aware scan (default command)\n");
   process.stdout.write("  doctor         Show runtime and tool availability\n");
-  process.stdout.write("  install-tools  Install Ruff + Vulture using selected method\n\n");
+  process.stdout.write("  install-tools  Install required tools for Python/TypeScript\n\n");
 
   process.stdout.write("Scan options:\n");
-  process.stdout.write("  --fix                       Apply safe Ruff auto-fixes first\n");
-  process.stdout.write("  --min-confidence <0-100>    Vulture confidence threshold (default: 100)\n");
+  process.stdout.write("  --language <mode>           auto | python | typescript (default: auto)\n");
+  process.stdout.write("  --fix                       Apply safe auto-fixes first\n");
+  process.stdout.write("  --min-confidence <0-100>    Vulture threshold for Python scans\n");
   process.stdout.write("  --ensure-tools              Install missing tools before scan\n");
-  process.stdout.write("  --install-method <method>   auto | uv | pipx | pip\n");
+  process.stdout.write("  --install-method <method>   auto | uv | pipx | pip | npm\n");
   process.stdout.write("  --strict                    Exit non-zero if findings remain\n");
   process.stdout.write("  --verbose                   Include raw tool output\n");
   process.stdout.write("  --ruff-bin <name>           Ruff binary (default: ruff)\n");
   process.stdout.write("  --vulture-bin <name>        Vulture binary (default: vulture)\n");
+  process.stdout.write("  --biome-bin <name>          Biome binary (default: biome)\n");
+  process.stdout.write("  --knip-bin <name>           Knip binary (default: knip)\n");
   process.stdout.write("  --json                      Alias for --output json\n");
   process.stdout.write("  --output <mode>             text | json (default: text)\n\n");
 
   process.stdout.write("Install options:\n");
-  process.stdout.write("  --method <method>           auto | uv | pipx | pip (default: auto)\n");
+  process.stdout.write("  --language <mode>           auto | python | typescript | all\n");
+  process.stdout.write("  --method <method>           auto | uv | pipx | pip | npm\n");
   process.stdout.write("  --json                      Alias for --output json\n\n");
 
   process.stdout.write("Examples:\n");
   process.stdout.write("  deadclean . --fix\n");
-  process.stdout.write("  deadclean scan ./examples/python-vibe-sample --strict\n");
-  process.stdout.write("  deadclean install-tools --method auto\n");
+  process.stdout.write("  deadclean ./apps/web --language typescript --strict\n");
+  process.stdout.write("  deadclean ./services --language python --ensure-tools\n");
+  process.stdout.write("  deadclean install-tools . --language all --method auto\n");
   process.stdout.write("  deadclean doctor --json\n");
 }
 
@@ -85,6 +103,20 @@ function parseInstallMethod(value: string): InstallMethod {
     fail(`Invalid install method '${value}'. Expected: ${VALID_INSTALL_METHODS.join(", ")}`);
   }
   return value as InstallMethod;
+}
+
+function parseLanguage(value: string): LanguageMode {
+  if (!VALID_LANGUAGES.includes(value as LanguageMode)) {
+    fail(`Invalid language '${value}'. Expected: ${VALID_LANGUAGES.join(", ")}`);
+  }
+  return value as LanguageMode;
+}
+
+function parseInstallLanguage(value: string): LanguageMode | "all" {
+  if (!VALID_INSTALL_LANGUAGES.includes(value as LanguageMode | "all")) {
+    fail(`Invalid language '${value}'. Expected: ${VALID_INSTALL_LANGUAGES.join(", ")}`);
+  }
+  return value as LanguageMode | "all";
 }
 
 function parseOutput(value: string): OutputMode {
@@ -106,7 +138,9 @@ function parseBaseOptions(args: string[]): BaseOptions {
   const options: BaseOptions = {
     output: "text",
     ruffBinary: "ruff",
-    vultureBinary: "vulture"
+    vultureBinary: "vulture",
+    biomeBinary: "biome",
+    knipBinary: "knip"
   };
 
   for (let i = 0; i < args.length; i += 1) {
@@ -114,6 +148,7 @@ function parseBaseOptions(args: string[]): BaseOptions {
 
     if (arg === "--json") {
       options.output = "json";
+      continue;
     }
 
     if (arg === "--output") {
@@ -130,6 +165,18 @@ function parseBaseOptions(args: string[]): BaseOptions {
 
     if (arg === "--vulture-bin") {
       options.vultureBinary = consumeValue(args, i, arg);
+      i += 1;
+      continue;
+    }
+
+    if (arg === "--biome-bin") {
+      options.biomeBinary = consumeValue(args, i, arg);
+      i += 1;
+      continue;
+    }
+
+    if (arg === "--knip-bin") {
+      options.knipBinary = consumeValue(args, i, arg);
       i += 1;
       continue;
     }
@@ -153,6 +200,12 @@ function parseScanOptions(args: string[]): ScanOptions {
 
     if (arg === "--fix") {
       options.fix = true;
+      continue;
+    }
+
+    if (arg === "--language") {
+      options.language = parseLanguage(consumeValue(args, i, arg));
+      i += 1;
       continue;
     }
 
@@ -187,7 +240,14 @@ function parseScanOptions(args: string[]): ScanOptions {
       continue;
     }
 
-    if (arg === "--output" || arg === "--ruff-bin" || arg === "--vulture-bin") {
+    if (
+      arg === "--output" ||
+      arg === "--ruff-bin" ||
+      arg === "--vulture-bin" ||
+      arg === "--biome-bin" ||
+      arg === "--knip-bin" ||
+      arg === "--language"
+    ) {
       i += 1;
       continue;
     }
@@ -215,8 +275,12 @@ function parseInstallOptions(args: string[]): InstallOptions {
   const base = parseBaseOptions(args);
   const options: InstallOptions = {
     ...base,
-    installMethod: "auto"
+    installMethod: "auto",
+    language: "all",
+    path: "."
   };
+
+  let pathSeen = false;
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
@@ -227,7 +291,19 @@ function parseInstallOptions(args: string[]): InstallOptions {
       continue;
     }
 
-    if (arg === "--output" || arg === "--ruff-bin" || arg === "--vulture-bin") {
+    if (arg === "--language") {
+      options.language = parseInstallLanguage(consumeValue(args, i, arg));
+      i += 1;
+      continue;
+    }
+
+    if (
+      arg === "--output" ||
+      arg === "--ruff-bin" ||
+      arg === "--vulture-bin" ||
+      arg === "--biome-bin" ||
+      arg === "--knip-bin"
+    ) {
       i += 1;
       continue;
     }
@@ -240,31 +316,71 @@ function parseInstallOptions(args: string[]): InstallOptions {
       fail(`Unknown option '${arg}'`);
     }
 
-    fail(`Unexpected argument '${arg}'`);
+    if (pathSeen) {
+      fail(`Unexpected argument '${arg}'`);
+    }
+
+    options.path = arg;
+    pathSeen = true;
   }
 
   return options;
 }
 
+async function resolveInstallLanguages(path: string, language: InstallOptions["language"]): Promise<ProjectLanguage[]> {
+  if (language === "all") {
+    return ["python", "typescript"];
+  }
+
+  if (language === "auto") {
+    const resolved = await detectProjectLanguage(path, "auto");
+    return [resolved];
+  }
+
+  return [language];
+}
+
 async function runInstallTools(args: string[]): Promise<number> {
   const options = parseInstallOptions(args);
   const runner = new RealCommandRunner();
-  const report = await ensureToolsInstalled(runner, options.installMethod, options.ruffBinary, options.vultureBinary);
+  const absolutePath = resolve(options.path);
+  const languages = await resolveInstallLanguages(absolutePath, options.language);
+
+  const reports = [];
+  for (const language of languages) {
+    reports.push(await ensureToolsInstalled(runner, language, options.installMethod, options));
+  }
+
+  const success = reports.every((report) => report.success);
 
   if (options.output === "json") {
-    process.stdout.write(formatJson(report));
+    process.stdout.write(
+      formatJson({
+        path: absolutePath,
+        requestedLanguage: options.language,
+        method: options.installMethod,
+        success,
+        reports
+      })
+    );
   } else {
     process.stdout.write("deadclean install-tools\n");
-    process.stdout.write(`requested_method: ${report.methodRequested}\n`);
-    process.stdout.write(`success: ${report.success}\n`);
-    process.stdout.write(`method_used: ${report.methodUsed ?? "none"}\n`);
-    process.stdout.write("attempts:\n");
-    for (const attempt of report.attempts) {
-      process.stdout.write(`  - ${attempt.method}: ${attempt.success ? "ok" : "failed"} | ${attempt.details}\n`);
+    process.stdout.write(`path: ${absolutePath}\n`);
+    process.stdout.write(`requested_language: ${options.language}\n`);
+    process.stdout.write(`requested_method: ${options.installMethod}\n`);
+    process.stdout.write(`success: ${success}\n`);
+
+    for (const report of reports) {
+      process.stdout.write(`language: ${report.language}\n`);
+      process.stdout.write(`  method_used: ${report.methodUsed ?? "none"}\n`);
+      process.stdout.write("  attempts:\n");
+      for (const attempt of report.attempts) {
+        process.stdout.write(`    - ${attempt.method}: ${attempt.success ? "ok" : "failed"} | ${attempt.details}\n`);
+      }
     }
   }
 
-  return report.success ? 0 : 1;
+  return success ? 0 : 1;
 }
 
 async function runScanCommand(args: string[]): Promise<number> {
@@ -282,12 +398,12 @@ async function runScanCommand(args: string[]): Promise<number> {
     return 0;
   }
 
-  return report.ruffIssueCount > 0 || report.vultureFindingCount > 0 ? 1 : 0;
+  return report.lintIssueCount > 0 || report.deadCodeFindingCount > 0 ? 1 : 0;
 }
 
 async function runDoctorCommand(args: string[]): Promise<number> {
   const options = parseBaseOptions(args);
-  const report = await runDoctor(options.ruffBinary, options.vultureBinary);
+  const report = await runDoctor(options);
 
   if (options.output === "json") {
     process.stdout.write(formatJson(report));

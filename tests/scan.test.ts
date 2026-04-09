@@ -6,7 +6,12 @@ class ScanRunner implements CommandRunner {
   async run(command: string, args: string[]): Promise<CommandResult> {
     const full = `${command} ${args.join(" ")}`.trim();
 
-    if (full === "ruff --version" || full === "vulture --version") {
+    if (
+      full === "ruff --version" ||
+      full === "vulture --version" ||
+      full === "biome --version" ||
+      full === "knip --version"
+    ) {
       return this.make(full, 0, "ok");
     }
 
@@ -16,6 +21,14 @@ class ScanRunner implements CommandRunner {
 
     if (full === "which vulture") {
       return this.make(full, 0, "/usr/local/bin/vulture");
+    }
+
+    if (full === "which biome") {
+      return this.make(full, 0, "/usr/local/bin/biome");
+    }
+
+    if (full === "which knip") {
+      return this.make(full, 0, "/usr/local/bin/knip");
     }
 
     if (full.includes("ruff check") && full.includes("--fix")) {
@@ -28,6 +41,18 @@ class ScanRunner implements CommandRunner {
 
     if (full.startsWith("vulture ")) {
       return this.make(full, 1, "sample.py:4: unused function 'old_code' (100% confidence)");
+    }
+
+    if (full.includes("biome lint") && full.includes("--write")) {
+      return this.make(full, 0, "Applied 2 fixes.");
+    }
+
+    if (full.includes("biome lint") && !full.includes("--write")) {
+      return this.make(full, 0, "Checked 3 files in 4ms. No fixes applied.");
+    }
+
+    if (full === "knip") {
+      return this.make(full, 1, "src/a.ts: unused export\nsrc/b.ts: unused file");
     }
 
     return this.make(full, 1, "unexpected command");
@@ -46,7 +71,7 @@ class ScanRunner implements CommandRunner {
   }
 }
 
-const options: ScanOptions = {
+const baseOptions: Omit<ScanOptions, "language"> = {
   path: ".",
   fix: true,
   minConfidence: 100,
@@ -56,16 +81,34 @@ const options: ScanOptions = {
   strict: false,
   verbose: false,
   ruffBinary: "ruff",
-  vultureBinary: "vulture"
+  vultureBinary: "vulture",
+  biomeBinary: "biome",
+  knipBinary: "knip"
 };
 
 describe("scan", () => {
-  test("runs scan and parses findings", async () => {
-    const report = await runScan(new ScanRunner(), options);
+  test("runs python scan and parses findings", async () => {
+    const report = await runScan(new ScanRunner(), {
+      ...baseOptions,
+      language: "python"
+    });
 
-    expect(report.ruffFixedCount).toBe(1);
-    expect(report.ruffIssueCount).toBe(0);
-    expect(report.vultureFindingCount).toBe(1);
-    expect(report.vultureFindings[0]?.file).toBe("sample.py");
+    expect(report.language).toBe("python");
+    expect(report.fixedCount).toBe(1);
+    expect(report.lintIssueCount).toBe(0);
+    expect(report.deadCodeFindingCount).toBe(1);
+    expect(report.deadCodeFindings[0]).toContain("sample.py");
+  });
+
+  test("runs typescript scan and parses findings", async () => {
+    const report = await runScan(new ScanRunner(), {
+      ...baseOptions,
+      language: "typescript"
+    });
+
+    expect(report.language).toBe("typescript");
+    expect(report.fixedCount).toBe(2);
+    expect(report.lintIssueCount).toBe(0);
+    expect(report.deadCodeFindingCount).toBe(2);
   });
 });

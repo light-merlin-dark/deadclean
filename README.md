@@ -1,16 +1,20 @@
 ```text
 deadclean
 safe dead-code cleanup for AI coding sessions
-ruff + vulture wrapper | agent-friendly output | install-method aware
+python + typescript support | ruff/vulture + biome/knip
 ```
 
 ## Why?
 
-- One command to run Ruff and Vulture with sane defaults.
-- Keeps auto-fixes safe: only Ruff `--fix` runs automatically.
-- Vulture findings are reported, never auto-deleted.
-- Output is compact and consistent for AI agents and CI logs.
-- Supports multiple tool install methods (`auto`, `uv`, `pipx`, `pip`).
+- One command for dead-code cleanup across Python and TypeScript projects.
+- Auto-detects project language (`python` or `typescript`).
+- Safe fix-first behavior:
+  - Python: Ruff `--fix`
+  - TypeScript: Biome fix mode
+- Deep dead-code reporting:
+  - Python: Vulture
+  - TypeScript: Knip
+- AI-friendly text and JSON output modes.
 
 ## Installation
 
@@ -18,16 +22,19 @@ ruff + vulture wrapper | agent-friendly output | install-method aware
 npm install -g @light-merlin-dark/deadclean
 ```
 
-Then install required Python tools your way:
+## Tool Setup
+
+Install language tools through `deadclean`:
 
 ```bash
-# Auto (tries uv -> pipx -> pip)
-deadclean install-tools --method auto
+# Install both Python + TypeScript tools
+deadclean install-tools --language all --method auto
 
-# Explicit method
-deadclean install-tools --method uv
-deadclean install-tools --method pipx
-deadclean install-tools --method pip
+# Python only (auto tries uv -> pipx -> pip)
+deadclean install-tools --language python --method auto
+
+# TypeScript only (uses npm)
+deadclean install-tools --language typescript --method auto
 ```
 
 ## Quick Start
@@ -36,16 +43,22 @@ deadclean install-tools --method pip
 # Check environment
 deadclean doctor
 
-# Scan only (no edits)
+# Auto-detect language and scan
 deadclean .
 
-# Safe Ruff fixes first, then scan
+# Safe auto-fixes before scan
 deadclean . --fix
 
-# CI mode: fail if findings remain
+# Force TypeScript mode
+deadclean ./apps/web --language typescript
+
+# Force Python mode
+deadclean ./services/api --language python
+
+# CI mode
 deadclean . --strict
 
-# JSON output for agents and automation
+# JSON for agents
 deadclean . --json
 ```
 
@@ -55,63 +68,51 @@ deadclean . --json
 Default `scan` command.
 
 Options:
-- `--fix` run safe Ruff auto-fixes before scanning.
-- `--min-confidence <0-100>` Vulture threshold (default `100`).
+- `--language <auto|python|typescript>` choose or auto-detect language.
+- `--fix` run safe auto-fixes before scanning.
+- `--min-confidence <0-100>` Vulture threshold for Python scans.
 - `--ensure-tools` install missing tools before scan.
-- `--install-method <auto|uv|pipx|pip>` installation strategy when used with `--ensure-tools`.
-- `--strict` exit non-zero if Ruff or Vulture findings remain.
-- `--verbose` include raw Ruff/Vulture output.
+- `--install-method <auto|uv|pipx|pip|npm>` install strategy for `--ensure-tools`.
+- `--strict` exit non-zero if lint/dead-code findings remain.
+- `--verbose` include raw tool output.
 - `--json` machine-readable output.
-- `--ruff-bin <name>` override Ruff binary.
-- `--vulture-bin <name>` override Vulture binary.
+- `--ruff-bin`, `--vulture-bin`, `--biome-bin`, `--knip-bin` override tool binaries.
 
 ### `deadclean doctor`
-Shows runtime and tool status (Node/Bun, Ruff, Vulture).
+Shows runtime and tool status (Node/Bun, Ruff, Vulture, Biome, Knip).
 
-### `deadclean install-tools`
-Installs Ruff and Vulture globally using the selected method.
+### `deadclean install-tools [path]`
+Installs required tools.
 
-## Example Project
+Options:
+- `--language <auto|python|typescript|all>` target language toolchain.
+- `--method <auto|uv|pipx|pip|npm>` install method.
 
-A tiny demo project is included at [`examples/python-vibe-sample`](examples/python-vibe-sample) so you can test behavior quickly:
+## Example Projects
+
+- Python sample: [`examples/python-vibe-sample`](examples/python-vibe-sample)
+- TypeScript sample: [`examples/typescript-vibe-sample`](examples/typescript-vibe-sample)
 
 ```bash
-deadclean ./examples/python-vibe-sample --fix
+deadclean ./examples/python-vibe-sample --fix --language python
+deadclean ./examples/typescript-vibe-sample --fix --language typescript
 ```
 
 ## Development
 
 ```bash
-# install deps
 bun install
-
-# run tests
 bun test
-
-# build
+bun run lint
 bun run build
-
-# run built CLI
 node dist/index.js --help
 ```
 
-## Publishing
-
-Use the included Makefile targets:
-
-```bash
-make check-auth
-make pre-publish
-make publish
-```
-
-See [`docs/publishing.md`](docs/publishing.md) for the full release checklist.
-
 ## Safety Model
 
-- Ruff `--fix` is limited to safe linter fixes.
-- Vulture is report-only and must be manually reviewed.
-- `--strict` helps enforce cleanup in CI without auto-removal.
+- `--fix` applies only linter-safe changes (Ruff/Biome).
+- Deep dead-code tools (Vulture/Knip) are report-only.
+- Use `--strict` in CI to enforce cleanup without auto-deleting code.
 
 ## License
 

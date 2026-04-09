@@ -1,5 +1,14 @@
-export type InstallMethod = "auto" | "uv" | "pipx" | "pip";
+export type InstallMethod = "auto" | "uv" | "pipx" | "pip" | "npm";
 export type OutputMode = "text" | "json";
+export type ProjectLanguage = "python" | "typescript";
+export type LanguageMode = "auto" | ProjectLanguage;
+
+export interface ToolBinaries {
+  ruffBinary: string;
+  vultureBinary: string;
+  biomeBinary: string;
+  knipBinary: string;
+}
 
 export interface CommandResult {
   command: string;
@@ -34,6 +43,7 @@ export interface InstallAttempt {
 }
 
 export interface InstallReport {
+  language: ProjectLanguage;
   success: boolean;
   methodRequested: InstallMethod;
   methodUsed: InstallMethod | null;
@@ -48,6 +58,7 @@ export interface VultureFinding {
 
 export interface ScanOptions {
   path: string;
+  language: LanguageMode;
   fix: boolean;
   minConfidence: number;
   ensureTools: boolean;
@@ -55,21 +66,26 @@ export interface ScanOptions {
   output: OutputMode;
   strict: boolean;
   verbose: boolean;
-  ruffBinary: string;
-  vultureBinary: string;
+  ruffBinary: ToolBinaries["ruffBinary"];
+  vultureBinary: ToolBinaries["vultureBinary"];
+  biomeBinary: ToolBinaries["biomeBinary"];
+  knipBinary: ToolBinaries["knipBinary"];
 }
 
 export interface ScanReport {
   path: string;
+  language: ProjectLanguage;
+  lintTool: string;
+  deadCodeTool: string;
   options: ScanOptions;
   install: InstallReport | null;
-  ruffFix: CommandResult | null;
-  ruffCheck: CommandResult;
-  vultureCheck: CommandResult;
-  ruffIssueCount: number;
-  ruffFixedCount: number;
-  vultureFindingCount: number;
-  vultureFindings: VultureFinding[];
+  fixResult: CommandResult | null;
+  lintResult: CommandResult;
+  deadCodeResult: CommandResult;
+  lintIssueCount: number;
+  fixedCount: number;
+  deadCodeFindingCount: number;
+  deadCodeFindings: string[];
   elapsedMs: number;
 }
 

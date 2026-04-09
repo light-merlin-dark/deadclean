@@ -1,5 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { parseRuffFixedCount, parseRuffIssueCount, parseVultureFindings } from "../src/parsers";
+import {
+  parseBiomeFixedCount,
+  parseBiomeIssueCount,
+  parseKnipFindings,
+  parseRuffFixedCount,
+  parseRuffIssueCount,
+  parseVultureFindings
+} from "../src/parsers";
 import type { CommandResult } from "../src/types";
 
 function result(stdout: string, stderr = "", exitCode = 0): CommandResult {
@@ -37,5 +44,16 @@ describe("parsers", () => {
       line: 10,
       message: "unused function 'debug_helper' (100% confidence)"
     });
+  });
+
+  test("parses Biome issues and fixes", () => {
+    expect(parseBiomeIssueCount(result("Found 4 diagnostics."))).toBe(4);
+    expect(parseBiomeIssueCount(result("Checked 3 files in 4ms. No fixes applied."))).toBe(0);
+    expect(parseBiomeFixedCount(result("Applied 3 fixes."))).toBe(3);
+  });
+
+  test("parses Knip findings", () => {
+    const findings = parseKnipFindings(result("Unused files (1)\nsrc/a.ts\nsrc/b.ts: unused export"));
+    expect(findings).toEqual(["src/a.ts", "src/b.ts: unused export"]);
   });
 });

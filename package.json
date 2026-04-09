@@ -1,7 +1,7 @@
 {
   "name": "@light-merlin-dark/deadclean",
-  "version": "0.1.0",
-  "description": "AI-friendly CLI wrapper for safe dead code cleanup with Ruff + Vulture.",
+  "version": "0.2.0",
+  "description": "AI-friendly CLI wrapper for dead code cleanup in Python and TypeScript projects.",
   "main": "dist/index.js",
   "bin": {
     "deadclean": "dist/index.js"
@@ -21,8 +21,11 @@
     "ai-agents",
     "cli",
     "python",
+    "typescript",
     "ruff",
     "vulture",
+    "biome",
+    "knip",
     "dead-code",
     "static-analysis",
     "code-quality",
