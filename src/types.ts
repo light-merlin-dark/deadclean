@@ -65,6 +65,7 @@ export interface ScanOptions {
   installMethod: InstallMethod;
   output: OutputMode;
   strict: boolean;
+  strictLint: boolean;
   verbose: boolean;
   ruffBinary: ToolBinaries["ruffBinary"];
   vultureBinary: ToolBinaries["vultureBinary"];

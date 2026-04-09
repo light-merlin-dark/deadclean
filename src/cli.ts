@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { runDoctor } from "./doctor";
-import { formatDoctorText, formatJson, formatScanText } from "./format";
+import { formatDoctorText, formatJson, formatScanJson, formatScanText } from "./format";
 import { ensureToolsInstalled } from "./install";
 import { detectProjectLanguage } from "./language";
 import { RealCommandRunner } from "./process";
@@ -38,6 +38,7 @@ const DEFAULT_SCAN_OPTIONS: ScanOptions = {
   installMethod: "auto",
   output: "text",
   strict: false,
+  strictLint: false,
   verbose: false,
   ruffBinary: "ruff",
   vultureBinary: "vulture",
@@ -72,7 +73,8 @@ function printHelp(): void {
   process.stdout.write("  --min-confidence <0-100>    Vulture threshold for Python scans\n");
   process.stdout.write("  --ensure-tools              Install missing tools before scan\n");
   process.stdout.write("  --install-method <method>   auto | uv | pipx | pip | npm\n");
-  process.stdout.write("  --strict                    Exit non-zero if findings remain\n");
+  process.stdout.write("  --strict                    Exit non-zero if dead-code findings remain\n");
+  process.stdout.write("  --strict-lint               Include lint findings in strict exit behavior\n");
   process.stdout.write("  --verbose                   Include raw tool output\n");
   process.stdout.write("  --ruff-bin <name>           Ruff binary (default: ruff)\n");
   process.stdout.write("  --vulture-bin <name>        Vulture binary (default: vulture)\n");
@@ -235,6 +237,11 @@ function parseScanOptions(args: string[]): ScanOptions {
       continue;
     }
 
+    if (arg === "--strict-lint") {
+      options.strictLint = true;
+      continue;
+    }
+
     if (arg === "--verbose") {
       options.verbose = true;
       continue;
@@ -389,7 +396,7 @@ async function runScanCommand(args: string[]): Promise<number> {
   const report = await runScan(runner, options);
 
   if (options.output === "json") {
-    process.stdout.write(formatJson(report));
+    process.stdout.write(formatScanJson(report, options.verbose));
   } else {
     process.stdout.write(formatScanText(report));
   }
@@ -398,7 +405,8 @@ async function runScanCommand(args: string[]): Promise<number> {
     return 0;
   }
 
-  return report.lintIssueCount > 0 || report.deadCodeFindingCount > 0 ? 1 : 0;
+  const lintFailure = options.strictLint ? report.lintIssueCount > 0 : false;
+  return report.deadCodeFindingCount > 0 || lintFailure ? 1 : 0;
 }
 
 async function runDoctorCommand(args: string[]): Promise<number> {

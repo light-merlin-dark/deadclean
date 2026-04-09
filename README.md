@@ -73,7 +73,8 @@ Options:
 - `--min-confidence <0-100>` Vulture threshold for Python scans.
 - `--ensure-tools` install missing tools before scan.
 - `--install-method <auto|uv|pipx|pip|npm>` install strategy for `--ensure-tools`.
-- `--strict` exit non-zero if lint/dead-code findings remain.
+- `--strict` exit non-zero if dead-code findings remain.
+- `--strict-lint` include lint findings in strict exit behavior.
 - `--verbose` include raw tool output.
 - `--json` machine-readable output.
 - `--ruff-bin`, `--vulture-bin`, `--biome-bin`, `--knip-bin` override tool binaries.
@@ -112,7 +113,7 @@ node dist/index.js --help
 
 - `--fix` applies only linter-safe changes (Ruff/Biome).
 - Deep dead-code tools (Vulture/Knip) are report-only.
-- Use `--strict` in CI to enforce cleanup without auto-deleting code.
+- Use `--strict` for dead-code gating and add `--strict-lint` if lint gating is also required.
 
 ## License
 

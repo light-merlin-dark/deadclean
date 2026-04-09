@@ -79,6 +79,7 @@ const baseOptions: Omit<ScanOptions, "language"> = {
   installMethod: "auto",
   output: "text",
   strict: false,
+  strictLint: false,
   verbose: false,
   ruffBinary: "ruff",
   vultureBinary: "vulture",

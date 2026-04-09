@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { resolve, join } from "node:path";
 import { access } from "node:fs/promises";
 import { constants } from "node:fs";
 import { ensureToolsInstalled, inspectLanguageTools } from "./install";
@@ -38,14 +38,15 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-async function selectTypeScriptLintTarget(root: string): Promise<string> {
-  const candidates = ["src", "app", "lib", "server", "client"].map((folder) => `${root}/${folder}`);
+async function selectTypeScriptLintTargets(root: string): Promise<string[]> {
+  const candidates = ["src", "src-tanstack", "app", "lib", "server", "client"].map((folder) => join(root, folder));
+  const targets: string[] = [];
   for (const candidate of candidates) {
     if (await pathExists(candidate)) {
-      return candidate;
+      targets.push(candidate);
     }
   }
-  return root;
+  return targets.length > 0 ? targets : [root];
 }
 
 export async function runScan(runner: CommandRunner, options: ScanOptions): Promise<ScanReport> {
@@ -53,7 +54,8 @@ export async function runScan(runner: CommandRunner, options: ScanOptions): Prom
   const minConfidence = ensureConfidence(options.minConfidence);
   const absolutePath = resolve(options.path);
   const language = await detectProjectLanguage(absolutePath, options.language);
-  const typeScriptLintTarget = language === "typescript" ? await selectTypeScriptLintTarget(absolutePath) : absolutePath;
+  const typeScriptLintTargets =
+    language === "typescript" ? await selectTypeScriptLintTargets(absolutePath) : [absolutePath];
 
   let install: InstallReport | null = null;
 
@@ -84,9 +86,9 @@ export async function runScan(runner: CommandRunner, options: ScanOptions): Prom
       fixResult = await runner.run(options.ruffBinary, ["check", absolutePath, "--fix", "--output-format", "full"]);
       assertToolRun("ruff --fix", fixResult.exitCode, displayOutput(fixResult));
     } else {
-      fixResult = await runner.run(options.biomeBinary, ["lint", "--write", typeScriptLintTarget]);
+      fixResult = await runner.run(options.biomeBinary, ["lint", "--write", ...typeScriptLintTargets]);
       if (fixResult.exitCode > 1 && /--write/i.test(displayOutput(fixResult))) {
-        fixResult = await runner.run(options.biomeBinary, ["lint", "--apply", typeScriptLintTarget]);
+        fixResult = await runner.run(options.biomeBinary, ["lint", "--apply", ...typeScriptLintTargets]);
       }
       assertToolRun("biome --write", fixResult.exitCode, displayOutput(fixResult));
     }
@@ -102,7 +104,7 @@ export async function runScan(runner: CommandRunner, options: ScanOptions): Prom
     assertToolRun("vulture", deadCodeResult.exitCode, displayOutput(deadCodeResult));
   } else {
     [lintResult, deadCodeResult] = await Promise.all([
-      runner.run(options.biomeBinary, ["lint", typeScriptLintTarget]),
+      runner.run(options.biomeBinary, ["lint", ...typeScriptLintTargets]),
       runner.run(options.knipBinary, [], { cwd: absolutePath })
     ]);
 

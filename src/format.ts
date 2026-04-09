@@ -1,5 +1,5 @@
 import { displayOutput } from "./process";
-import type { DoctorReport, InstallReport, ScanReport } from "./types";
+import type { CommandResult, DoctorReport, InstallReport, ScanReport } from "./types";
 
 function formatInstallReport(install: InstallReport | null): string[] {
   if (!install) {
@@ -78,6 +78,55 @@ export function formatScanText(report: ScanReport): string {
   lines.push("  - Use --strict in CI to fail on remaining findings.");
 
   return `${lines.join("\n")}\n`;
+}
+
+function summarizeCommandResult(result: CommandResult, maxChars = 1200): Record<string, unknown> {
+  const output = `${result.stdout}\n${result.stderr}`.trim();
+  const trimmedOutput = output.length > maxChars ? `${output.slice(0, maxChars)}\n...(truncated)` : output;
+
+  return {
+    command: result.command,
+    args: result.args,
+    exitCode: result.exitCode,
+    durationMs: result.durationMs,
+    output: trimmedOutput
+  };
+}
+
+export function formatScanJson(report: ScanReport, verbose: boolean): string {
+  const payload: Record<string, unknown> = {
+    path: report.path,
+    language: report.language,
+    lintTool: report.lintTool,
+    deadCodeTool: report.deadCodeTool,
+    lintIssueCount: report.lintIssueCount,
+    fixedCount: report.fixedCount,
+    deadCodeFindingCount: report.deadCodeFindingCount,
+    deadCodeFindings: report.deadCodeFindings,
+    elapsedMs: report.elapsedMs,
+    options: {
+      path: report.options.path,
+      language: report.options.language,
+      fix: report.options.fix,
+      minConfidence: report.options.minConfidence,
+      ensureTools: report.options.ensureTools,
+      installMethod: report.options.installMethod,
+      strict: report.options.strict,
+      strictLint: report.options.strictLint
+    }
+  };
+
+  if (report.install) {
+    payload.install = report.install;
+  }
+
+  if (verbose) {
+    payload.fixResult = report.fixResult ? summarizeCommandResult(report.fixResult) : null;
+    payload.lintResult = summarizeCommandResult(report.lintResult);
+    payload.deadCodeResult = summarizeCommandResult(report.deadCodeResult);
+  }
+
+  return formatJson(payload);
 }
 
 export function formatJson(value: unknown): string {

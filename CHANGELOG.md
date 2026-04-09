@@ -8,6 +8,8 @@ All notable changes to this project will be documented in this file.
 - Added `--language` support for scan and install flows.
 - Extended `doctor` to report Ruff/Vulture/Biome/Knip.
 - Added TypeScript example project.
+- Added `--strict-lint` so strict mode can focus on dead code by default.
+- Reduced JSON scan output noise (summary-first unless `--verbose`).
 - Updated docs and skill guidance for universal dead-code cleanup.
 
 ## [0.1.0] - 2026-04-09

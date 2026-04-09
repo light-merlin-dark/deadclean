@@ -33,7 +33,8 @@ deadclean . --strict
 - `deadclean [path]` auto-detect and scan.
 - `deadclean [path] --language python|typescript` force language.
 - `deadclean [path] --fix` apply safe linter fixes first.
-- `deadclean [path] --strict` fail with non-zero exit when findings remain.
+- `deadclean [path] --strict` fail when dead-code findings remain.
+- `deadclean [path] --strict --strict-lint` fail on both dead-code and lint findings.
 - `deadclean [path] --json` emit structured output for agents.
 - `deadclean install-tools --language all --method auto` install all required tools.
 - `deadclean doctor` inspect runtime/tool availability.
@@ -41,4 +42,4 @@ deadclean . --strict
 ## Safety Rules
 - Do not delete Vulture or Knip findings without explicit confirmation.
 - Treat dead-code findings as candidates, not guaranteed safe removals.
-- Prefer `--strict` in CI for enforcement without auto-removal.
+- Prefer `--strict` in CI; add `--strict-lint` only when lint gating is desired.
