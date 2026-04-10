@@ -39,7 +39,7 @@ async function hasExtension(root: string, extensions: Set<string>, maxDepth = 4)
       continue;
     }
 
-    let entries;
+    let entries: import("node:fs").Dirent[];
     try {
       entries = await readdir(current.path, { withFileTypes: true });
     } catch {
@@ -70,7 +70,7 @@ async function hasExtension(root: string, extensions: Set<string>, maxDepth = 4)
 }
 
 export async function detectProjectLanguage(path: string, language: LanguageMode): Promise<ProjectLanguage> {
-  if (language !== "auto") {
+  if (language !== "auto" && language !== "all") {
     return language;
   }
 

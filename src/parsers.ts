@@ -1,4 +1,4 @@
-import type { CommandResult, VultureFinding } from "./types";
+import type { CommandResult, StructuredFinding, VultureFinding } from "./types";
 
 const RUFF_SUMMARY_PATTERN = /Found\s+(\d+)\s+errors?/i;
 const RUFF_FIXED_PATTERN = /\((\d+)\s+fixed,\s*(\d+)\s+remaining\)/i;
@@ -31,18 +31,53 @@ interface KnipIssue {
 
 interface KnipJsonPayload {
   issues?: KnipIssue[];
+  files?: Record<string, KnipIssue>;
 }
 
 export interface KnipParseResult {
   findings: string[];
+  findingsStructured: StructuredFinding[];
   preludeWarnings: string[];
   parsingErrors: string[];
 }
 
+function extractKnipNames(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((item: unknown) => {
+        if (typeof item === "string") return item;
+        if (item && typeof item === "object" && "name" in item) return String((item as { name: string }).name);
+        return null;
+      })
+      .filter((n): n is string => n !== null);
+  }
+  return [];
+}
+
+function classifySeverity(confidence: number | null, category: string): "high" | "medium" | "low" {
+  if (category === "unused_function" || category === "exports" || category === "types") return "high";
+  if (confidence !== null) {
+    if (confidence >= 80) return "high";
+    if (confidence >= 60) return "medium";
+    return "low";
+  }
+  return "medium";
+}
+
+function parseConfidence(message: string): number | null {
+  const match = message.match(/\((\d+)%\s+confidence\)/i);
+  return match ? Number(match[1]) : null;
+}
+
 export function parseRuffIssueCount(result: CommandResult): number {
   const output = `${result.stdout}\n${result.stderr}`;
-  const summaryMatch = output.match(RUFF_SUMMARY_PATTERN);
 
+  try {
+    const parsed = JSON.parse(output.trim());
+    if (Array.isArray(parsed)) return parsed.length;
+  } catch {}
+
+  const summaryMatch = output.match(RUFF_SUMMARY_PATTERN);
   if (summaryMatch) {
     return Number(summaryMatch[1]);
   }
@@ -74,6 +109,28 @@ export function parseRuffFixedCount(result: CommandResult): number {
   return 0;
 }
 
+export function parseRuffStructured(result: CommandResult): StructuredFinding[] {
+  const output = `${result.stdout}\n${result.stderr}`.trim();
+
+  try {
+    const parsed = JSON.parse(output);
+    if (Array.isArray(parsed)) {
+      return parsed.map((item: { filename?: string; location?: { row?: number }; message?: string; code?: { code?: string } }) => ({
+        file: item.filename ?? "",
+        line: item.location?.row ?? null,
+        message: item.message ?? "",
+        tool: "ruff",
+        category: item.code?.code ?? "lint",
+        name: null,
+        confidence: null,
+        severity: "medium" as const
+      }));
+    }
+  } catch {}
+
+  return [];
+}
+
 export function parseVultureFindings(result: CommandResult): VultureFinding[] {
   const output = `${result.stdout}\n${result.stderr}`;
 
@@ -94,14 +151,37 @@ export function parseVultureFindings(result: CommandResult): VultureFinding[] {
       return {
         file: match[1],
         line: Number(match[2]),
-        message: match[3]
+        message: match[3],
+        confidence: parseConfidence(match[3]) ?? 100
       };
     })
     .filter((finding): finding is VultureFinding => finding !== null);
 }
 
+export function parseVultureStructured(result: CommandResult): StructuredFinding[] {
+  return parseVultureFindings(result).map((f) => ({
+    file: f.file,
+    line: f.line,
+    message: f.message,
+    tool: "vulture",
+    category: "unused_code",
+    name: null,
+    confidence: f.confidence,
+    severity: classifySeverity(f.confidence, "unused_code")
+  }));
+}
+
 export function parseBiomeIssueCount(result: CommandResult): number {
   const output = `${result.stdout}\n${result.stderr}`;
+
+  try {
+    const parsed = JSON.parse(output.trim());
+    if (parsed && typeof parsed === "object" && "diagnostics" in parsed) {
+      const diagnostics = (parsed as { diagnostics: unknown[] }).diagnostics;
+      if (Array.isArray(diagnostics)) return diagnostics.length;
+    }
+  } catch {}
+
   const summaryMatch = output.match(BIOME_SUMMARY_PATTERN);
   if (summaryMatch) {
     return Number(summaryMatch[1]);
@@ -132,6 +212,31 @@ export function parseBiomeFixedCount(result: CommandResult): number {
   return 0;
 }
 
+export function parseBiomeStructured(result: CommandResult): StructuredFinding[] {
+  const output = `${result.stdout}\n${result.stderr}`.trim();
+
+  try {
+    const parsed = JSON.parse(output);
+    if (parsed && typeof parsed === "object" && "diagnostics" in parsed) {
+      const diagnostics = (parsed as { diagnostics: Array<{ location?: { file?: string; line?: number }; message?: string; category?: string }> }).diagnostics;
+      if (Array.isArray(diagnostics)) {
+        return diagnostics.map((d) => ({
+          file: d.location?.file ?? "",
+          line: d.location?.line ?? null,
+          message: d.message ?? "",
+          tool: "biome",
+          category: d.category ?? "lint",
+          name: null,
+          confidence: null,
+          severity: "medium" as const
+        }));
+      }
+    }
+  } catch {}
+
+  return [];
+}
+
 function tryParseKnipPayload(output: string): { payload: KnipJsonPayload | null; prelude: string } {
   const trimmed = output.trim();
   if (!trimmed) {
@@ -143,9 +248,7 @@ function tryParseKnipPayload(output: string): { payload: KnipJsonPayload | null;
       payload: JSON.parse(trimmed) as KnipJsonPayload,
       prelude: ""
     };
-  } catch {
-    // Continue with best-effort extraction below.
-  }
+  } catch {}
 
   const lines = trimmed.split(/\r?\n/);
   for (let i = 0; i < lines.length; i += 1) {
@@ -156,10 +259,7 @@ function tryParseKnipPayload(output: string): { payload: KnipJsonPayload | null;
     try {
       return {
         payload: JSON.parse(candidate) as KnipJsonPayload,
-        prelude: lines
-          .slice(0, i)
-          .join("\n")
-          .trim()
+        prelude: lines.slice(0, i).join("\n").trim()
       };
     } catch {
       continue;
@@ -178,7 +278,9 @@ function summarizeKnipIssue(issue: KnipIssue): string | null {
     if (!Array.isArray(value) || value.length === 0) {
       continue;
     }
-    parts.push(`${label}:${value.length}`);
+    const names = extractKnipNames(value);
+    const detail = names.length > 0 ? `${label}:${names.join(", ")}` : `${label}:${value.length}`;
+    parts.push(detail);
   }
 
   if (parts.length === 0) {
@@ -188,12 +290,54 @@ function summarizeKnipIssue(issue: KnipIssue): string | null {
   return `${file} [${parts.join(", ")}]`;
 }
 
+function extractKnipStructured(issue: KnipIssue): StructuredFinding[] {
+  const file = typeof issue.file === "string" && issue.file.trim().length > 0 ? issue.file : "(unknown file)";
+  const findings: StructuredFinding[] = [];
+
+  for (const [key, label] of Object.entries(KNIP_CATEGORY_LABELS)) {
+    const value = issue[key];
+    if (!Array.isArray(value) || value.length === 0) {
+      continue;
+    }
+    const names = extractKnipNames(value);
+
+    if (names.length > 0) {
+      for (const name of names) {
+        findings.push({
+          file,
+          line: null,
+          message: `unused ${label}: ${name}`,
+          tool: "knip",
+          category: label,
+          name,
+          confidence: null,
+          severity: classifySeverity(null, label)
+        });
+      }
+    } else {
+      findings.push({
+        file,
+        line: null,
+        message: `${value.length} unused ${label}`,
+        tool: "knip",
+        category: label,
+        name: null,
+        confidence: null,
+        severity: classifySeverity(null, label)
+      });
+    }
+  }
+
+  return findings;
+}
+
 export function parseKnipResult(result: CommandResult): KnipParseResult {
   const stdout = result.stdout.trim();
   const stderr = result.stderr.trim();
   if (!stdout && !stderr) {
     return {
       findings: [],
+      findingsStructured: [],
       preludeWarnings: [],
       parsingErrors: []
     };
@@ -214,10 +358,22 @@ export function parseKnipResult(result: CommandResult): KnipParseResult {
       continue;
     }
 
-    const issues = Array.isArray(payload.issues) ? payload.issues : [];
+    let issues: KnipIssue[] = [];
+
+    if (Array.isArray(payload.issues)) {
+      issues = payload.issues;
+    } else if (payload.files && typeof payload.files === "object") {
+      issues = Object.entries(payload.files).map(([file, data]) => ({
+        file,
+        ...(data as Record<string, unknown>)
+      }));
+    }
+
     const findings = issues
       .map((issue) => summarizeKnipIssue(issue))
       .filter((line): line is string => typeof line === "string");
+
+    const findingsStructured = issues.flatMap((issue) => extractKnipStructured(issue));
 
     const preludeWarnings = `${prelude}\n${attempt.trailingPrelude}`
       .split(/\r?\n/)
@@ -226,6 +382,7 @@ export function parseKnipResult(result: CommandResult): KnipParseResult {
 
     return {
       findings,
+      findingsStructured,
       preludeWarnings,
       parsingErrors: []
     };
@@ -233,6 +390,7 @@ export function parseKnipResult(result: CommandResult): KnipParseResult {
 
   return {
     findings: [],
+    findingsStructured: [],
     preludeWarnings: [],
     parsingErrors: ["Unable to parse Knip JSON output"]
   };

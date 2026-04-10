@@ -53,8 +53,17 @@ class InstallRunner implements CommandRunner {
       return this.command(full, 0, "installed");
     }
 
-    if (full === "npm --version") {
+    if (full === "npm --version" || full === "npx --version") {
       return this.command(full, 0, "10.0.0");
+    }
+
+    if (full === "bun --version") {
+      return this.command(full, 1, "missing");
+    }
+
+    if (full === "bun install -g @biomejs/biome knip") {
+      this.typescriptInstalled = true;
+      return this.command(full, 0, "installed");
     }
 
     if (full === "npm install -g @biomejs/biome knip") {
@@ -99,5 +108,14 @@ describe("install", () => {
 
     expect(report.success).toBe(true);
     expect(report.methodUsed).toBe("npm");
+  });
+
+  test("python returns early if already installed", async () => {
+    const runner = new InstallRunner();
+    await ensureToolsInstalled(runner, "python", "auto", binaries);
+    const report = await ensureToolsInstalled(runner, "python", "auto", binaries);
+
+    expect(report.success).toBe(true);
+    expect(report.methodUsed).toBeNull();
   });
 });

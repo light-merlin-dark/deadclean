@@ -1,7 +1,7 @@
-export type InstallMethod = "auto" | "uv" | "pipx" | "pip" | "npm";
-export type OutputMode = "text" | "json";
+export type InstallMethod = "auto" | "uv" | "pipx" | "pip" | "npm" | "bun";
+export type OutputMode = "text" | "json" | "sarif";
 export type ProjectLanguage = "python" | "typescript";
-export type LanguageMode = "auto" | ProjectLanguage;
+export type LanguageMode = "auto" | ProjectLanguage | "all";
 
 export interface ToolBinaries {
   ruffBinary: string;
@@ -18,11 +18,13 @@ export interface CommandResult {
   stderr: string;
   durationMs: number;
   notFound: boolean;
+  timedOut?: boolean;
 }
 
 export interface RunCommandOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  timeout?: number;
 }
 
 export interface CommandRunner {
@@ -54,6 +56,18 @@ export interface VultureFinding {
   file: string;
   line: number;
   message: string;
+  confidence: number;
+}
+
+export interface StructuredFinding {
+  file: string;
+  line: number | null;
+  message: string;
+  tool: string;
+  category: string;
+  name: string | null;
+  confidence: number | null;
+  severity: "high" | "medium" | "low";
 }
 
 export interface ScanOptions {
@@ -68,11 +82,20 @@ export interface ScanOptions {
   strict: boolean;
   strictLint: boolean;
   verbose: boolean;
+  quiet: boolean;
+  summary: boolean;
   knipConfig: string | null;
   workspaces: string[];
   directory: string | null;
   knipArgs: string[];
   biomeArgs: string[];
+  ruffArgs: string[];
+  vultureArgs: string[];
+  outputFile: string | null;
+  fixRounds: number;
+  diffBase: string | null;
+  staged: boolean;
+  exclude: string[];
   ruffBinary: ToolBinaries["ruffBinary"];
   vultureBinary: ToolBinaries["vultureBinary"];
   biomeBinary: ToolBinaries["biomeBinary"];
@@ -81,7 +104,7 @@ export interface ScanOptions {
 
 export interface ScanReport {
   path: string;
-  language: ProjectLanguage;
+  language: ProjectLanguage | ProjectLanguage[];
   lintTool: string;
   deadCodeTool: string;
   options: ScanOptions;
@@ -95,9 +118,16 @@ export interface ScanReport {
   displayedDeadCodeFindingCount: number;
   findingsTruncated: boolean;
   deadCodeFindings: string[];
+  deadCodeFindingsStructured: StructuredFinding[];
   toolErrors: string[];
   executionErrors: string[];
   elapsedMs: number;
+  timestamp: string;
+  toolVersions: Record<string, string | null>;
+  filesScanned: number | null;
+  filesWithIssues: number;
+  exitCode: number;
+  status: string;
 }
 
 export interface DoctorReport {
@@ -106,4 +136,25 @@ export interface DoctorReport {
   bunVersion: string | null;
   cwd: string;
   tools: ToolStatus[];
+  ready: boolean;
+  readyFor: Record<string, boolean>;
+  missingTools: string[];
+}
+
+export interface DeadcleanConfig {
+  language?: LanguageMode;
+  minConfidence?: number;
+  maxFindings?: number | null;
+  fix?: boolean;
+  fixRounds?: number;
+  strict?: boolean;
+  strictLint?: boolean;
+  output?: OutputMode;
+  exclude?: string[];
+  knipConfig?: string;
+  workspaces?: string[];
+  directory?: string;
+  diffBase?: string;
+  timeout?: number;
+  [key: string]: unknown;
 }

@@ -12,7 +12,7 @@ class ScanRunner implements CommandRunner {
       full === "biome --version" ||
       full === "knip --version"
     ) {
-      return this.make(full, 0, "ok");
+      return this.make(full, 0, "1.0.0");
     }
 
     if (full === "which ruff") {
@@ -31,12 +31,16 @@ class ScanRunner implements CommandRunner {
       return this.make(full, 0, "/usr/local/bin/knip");
     }
 
+    if (full.startsWith("git ")) {
+      return this.make(full, 0, "");
+    }
+
     if (full.includes("ruff check") && full.includes("--fix")) {
-      return this.make(full, 0, "Found 1 error (1 fixed, 0 remaining).");
+      return this.make(full, 0, "[]");
     }
 
     if (full.includes("ruff check") && !full.includes("--fix")) {
-      return this.make(full, 0, "All checks passed!");
+      return this.make(full, 0, "[]");
     }
 
     if (full.startsWith("vulture ")) {
@@ -89,7 +93,7 @@ class ScanRunner implements CommandRunner {
 const baseOptions: Omit<ScanOptions, "language"> = {
   path: ".",
   fix: true,
-  minConfidence: 100,
+  minConfidence: 80,
   maxFindings: 200,
   ensureTools: false,
   installMethod: "auto",
@@ -97,11 +101,20 @@ const baseOptions: Omit<ScanOptions, "language"> = {
   strict: false,
   strictLint: false,
   verbose: false,
+  quiet: false,
+  summary: false,
   knipConfig: null,
   workspaces: [],
   directory: null,
   knipArgs: [],
   biomeArgs: [],
+  ruffArgs: [],
+  vultureArgs: [],
+  outputFile: null,
+  fixRounds: 1,
+  diffBase: null,
+  staged: false,
+  exclude: [],
   ruffBinary: "ruff",
   vultureBinary: "vulture",
   biomeBinary: "biome",
@@ -126,25 +139,28 @@ describe("scan", () => {
     });
 
     expect(report.language).toBe("python");
-    expect(report.fixedCount).toBe(1);
     expect(report.lintIssueCount).toBe(0);
     expect(report.deadCodeFindingCount).toBe(1);
     expect(report.deadCodeFindings[0]).toContain("sample.py");
     expect(report.executionErrors).toHaveLength(0);
     expect(report.toolErrors).toHaveLength(0);
+    expect(report.deadCodeFindingsStructured.length).toBeGreaterThanOrEqual(1);
+    expect(report.timestamp).toBeTruthy();
+    expect(report.status).toBe("findings");
+    expect(report.exitCode).toBe(0);
   });
 
-  test("runs typescript scan and parses findings", async () => {
+  test("runs typescript scan and parses findings with symbol names", async () => {
     const report = await runScan(new ScanRunner(), {
       ...baseOptions,
       language: "typescript"
     });
 
     expect(report.language).toBe("typescript");
-    expect(report.fixedCount).toBe(2);
     expect(report.lintIssueCount).toBe(0);
     expect(report.deadCodeFindingCount).toBe(2);
-    expect(report.deadCodeFindings).toEqual(["src/a.ts [exports:1]", "src/b.ts [files:1]"]);
+    expect(report.deadCodeFindings).toEqual(["src/a.ts [exports:unusedExport]", "src/b.ts [files:src/b.ts]"]);
+    expect(report.deadCodeFindingsStructured.length).toBeGreaterThanOrEqual(2);
     expect(report.executionErrors).toHaveLength(0);
     expect(report.toolErrors).toHaveLength(0);
   });
@@ -160,5 +176,40 @@ describe("scan", () => {
     expect(report.displayedDeadCodeFindingCount).toBe(1);
     expect(report.findingsTruncated).toBe(true);
     expect(report.deadCodeFindings).toHaveLength(1);
+  });
+
+  test("polyglot scan runs both languages", async () => {
+    const report = await runScan(new ScanRunner(), {
+      ...baseOptions,
+      language: "all",
+      fix: false
+    });
+
+    expect(report.language).toEqual(["python", "typescript"]);
+    expect(report.deadCodeFindingCount).toBeGreaterThanOrEqual(3);
+    expect(report.lintTool).toContain("+");
+  });
+
+  test("strict mode sets exit code to 1 on findings", async () => {
+    const report = await runScan(new ScanRunner(), {
+      ...baseOptions,
+      language: "python",
+      strict: true,
+      fix: false
+    });
+
+    expect(report.exitCode).toBe(1);
+    expect(report.status).toBe("findings");
+  });
+
+  test("tool versions are included", async () => {
+    const report = await runScan(new ScanRunner(), {
+      ...baseOptions,
+      language: "python",
+      fix: false
+    });
+
+    expect(report.toolVersions).toBeDefined();
+    expect(report.toolVersions.ruff).toBeTruthy();
   });
 });

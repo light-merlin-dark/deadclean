@@ -1,0 +1,75 @@
+name: "deadclean"
+description: "Run deadclean dead-code cleanup scan"
+author: "light-merlin-dark"
+inputs:
+  path:
+    description: "Path to scan"
+    required: false
+    default: "."
+  language:
+    description: "Language mode (auto, python, typescript, all)"
+    required: false
+    default: "auto"
+  strict:
+    description: "Exit non-zero if dead-code findings remain"
+    required: false
+    default: "false"
+  strict-lint:
+    description: "Include lint findings in strict exit behavior"
+    required: false
+    default: "false"
+  fix:
+    description: "Apply safe auto-fixes before scanning"
+    required: false
+    default: "false"
+  ensure-tools:
+    description: "Install missing tools before scan"
+    required: false
+    default: "false"
+  min-confidence:
+    description: "Vulture confidence threshold (0-100)"
+    required: false
+    default: "80"
+  max-findings:
+    description: "Cap reported findings (0 for unlimited)"
+    required: false
+    default: "200"
+  output:
+    description: "Output format (text, json, sarif)"
+    required: false
+    default: "text"
+  exclude:
+    description: "File/directory exclusion patterns (comma-separated)"
+    required: false
+    default: ""
+  diff-base:
+    description: "Only scan files changed vs git ref"
+    required: false
+    default: ""
+runs:
+  using: "composite"
+  steps:
+    - name: Install deadclean
+      shell: bash
+      run: npm install -g @light-merlin-dark/deadclean
+
+    - name: Ensure tools installed
+      if: inputs.ensure-tools == 'true'
+      shell: bash
+      run: deadclean install-tools --language ${{ inputs.language }} --method auto
+
+    - name: Run deadclean scan
+      shell: bash
+      run: |
+        ARGS="${{ inputs.path }}"
+        ARGS="$ARGS --language ${{ inputs.language }}"
+        ARGS="$ARGS --output ${{ inputs.output }}"
+        [ "${{ inputs.strict }}" = "true" ] && ARGS="$ARGS --strict"
+        [ "${{ inputs.strict-lint }}" = "true" ] && ARGS="$ARGS --strict-lint"
+        [ "${{ inputs.fix }}" = "true" ] && ARGS="$ARGS --fix"
+        [ "${{ inputs.ensure-tools }}" = "true" ] && ARGS="$ARGS --ensure-tools"
+        [ -n "${{ inputs.min-confidence }}" ] && ARGS="$ARGS --min-confidence ${{ inputs.min-confidence }}"
+        [ "${{ inputs.max-findings }}" != "0" ] && ARGS="$ARGS --max-findings ${{ inputs.max-findings }}"
+        [ -n "${{ inputs.diff-base }}" ] && ARGS="$ARGS --diff-base ${{ inputs.diff-base }}"
+        [ -n "${{ inputs.exclude }}" ] && ARGS="$ARGS --exclude ${{ inputs.exclude }}"
+        deadclean $ARGS

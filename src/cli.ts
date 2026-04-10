@@ -1,11 +1,12 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync, writeFileSync, readFile } from "node:fs";
 import { resolve } from "node:path";
 import { runDoctor } from "./doctor";
-import { formatDoctorText, formatJson, formatScanJson, formatScanText } from "./format";
+import { formatDoctorText, formatJson, formatScanJson, formatScanSarif, formatScanText } from "./format";
 import { formatInitText, runInit } from "./init";
 import { ensureToolsInstalled } from "./install";
 import { detectProjectLanguage } from "./language";
 import { RealCommandRunner } from "./process";
+import { loadConfig, mergeConfigWithDefaults } from "./scan";
 import { runScan } from "./scan";
 import type {
   InstallMethod,
@@ -16,8 +17,8 @@ import type {
   ToolBinaries
 } from "./types";
 
-const VALID_INSTALL_METHODS: InstallMethod[] = ["auto", "uv", "pipx", "pip", "npm"];
-const VALID_LANGUAGES: LanguageMode[] = ["auto", "python", "typescript"];
+const VALID_INSTALL_METHODS: InstallMethod[] = ["auto", "uv", "pipx", "pip", "npm", "bun"];
+const VALID_LANGUAGES: LanguageMode[] = ["auto", "python", "typescript", "all"];
 const VALID_INSTALL_LANGUAGES: Array<LanguageMode | "all"> = ["auto", "python", "typescript", "all"];
 
 interface BaseOptions extends ToolBinaries {
@@ -40,7 +41,7 @@ const DEFAULT_SCAN_OPTIONS: ScanOptions = {
   path: ".",
   language: "auto",
   fix: false,
-  minConfidence: 100,
+  minConfidence: 80,
   maxFindings: 200,
   ensureTools: false,
   installMethod: "auto",
@@ -48,11 +49,20 @@ const DEFAULT_SCAN_OPTIONS: ScanOptions = {
   strict: false,
   strictLint: false,
   verbose: false,
+  quiet: false,
+  summary: false,
   knipConfig: null,
   workspaces: [],
   directory: null,
   knipArgs: [],
   biomeArgs: [],
+  ruffArgs: [],
+  vultureArgs: [],
+  outputFile: null,
+  fixRounds: 1,
+  diffBase: null,
+  staged: false,
+  exclude: [],
   ruffBinary: "ruff",
   vultureBinary: "vulture",
   biomeBinary: "biome",
@@ -74,39 +84,56 @@ function printHelp(): void {
   process.stdout.write("  deadclean scan [path] [options]\n");
   process.stdout.write("  deadclean doctor [options]\n");
   process.stdout.write("  deadclean init [path] [options]\n");
-  process.stdout.write("  deadclean install-tools [path] [options]\n\n");
+  process.stdout.write("  deadclean install-tools [path] [options]\n");
+  process.stdout.write("  deadclean baseline save [path] [options]\n");
+  process.stdout.write("  deadclean baseline check [path] [options]\n\n");
 
   process.stdout.write("Commands:\n");
   process.stdout.write("  scan           Run language-aware scan (default command)\n");
   process.stdout.write("  doctor         Show runtime and tool availability\n");
   process.stdout.write("  init           Create starter knip.json and .vulture_ignore files\n");
-  process.stdout.write("  install-tools  Install required tools for Python/TypeScript\n\n");
+  process.stdout.write("  install-tools  Install required tools for Python/TypeScript\n");
+  process.stdout.write("  baseline save  Record current findings as accepted baseline\n");
+  process.stdout.write("  baseline check Compare current findings against baseline\n\n");
 
   process.stdout.write("Scan options:\n");
-  process.stdout.write("  --language <mode>           auto | python | typescript (default: auto)\n");
+  process.stdout.write("  --language <mode>           auto | python | typescript | all (default: auto)\n");
   process.stdout.write("  --fix                       Apply safe auto-fixes first\n");
-  process.stdout.write("  --min-confidence <0-100>    Vulture threshold for Python scans\n");
-  process.stdout.write("  --max-findings <n>          Cap reported findings (default: 200, use '0' for no cap)\n");
+  process.stdout.write("  --min-confidence <0-100>    Vulture threshold (default: 80)\n");
+  process.stdout.write("  --max-findings <n>          Cap findings (default: 200, 0=unlimited)\n");
   process.stdout.write("  --ensure-tools              Install missing tools before scan\n");
-  process.stdout.write("  --install-method <method>   auto | uv | pipx | pip | npm\n");
+  process.stdout.write("  --install-method <method>   auto | uv | pipx | pip | npm | bun\n");
   process.stdout.write("  --knip-config <path>        Knip config file path\n");
   process.stdout.write("  --workspace <filter>        Knip workspace filter (repeatable)\n");
   process.stdout.write("  --directory <path>          Knip directory scope relative to project root\n");
   process.stdout.write("  --knip-arg <arg>            Extra Knip arg (repeatable)\n");
   process.stdout.write("  --biome-arg <arg>           Extra Biome lint arg (repeatable)\n");
+  process.stdout.write("  --ruff-arg <arg>            Extra Ruff arg (repeatable)\n");
+  process.stdout.write("  --vulture-arg <arg>         Extra Vulture arg (repeatable)\n");
+  process.stdout.write("  --exclude <pattern>         File/directory exclusion pattern (repeatable)\n");
+  process.stdout.write("  --output-file <path>        Write output to file\n");
+  process.stdout.write("  --fix-rounds <n>            Iterative fix rounds (default: 1, 0=until convergence)\n");
+  process.stdout.write("  --diff-base <ref>           Only scan files changed vs git ref\n");
+  process.stdout.write("  --staged                    Only scan staged files\n");
   process.stdout.write("  --strict                    Exit non-zero if dead-code findings remain\n");
   process.stdout.write("  --strict-lint               Include lint findings in strict exit behavior\n");
+  process.stdout.write("  --summary                   One-line summary output\n");
+  process.stdout.write("  --quiet                     Suppress non-essential output\n");
   process.stdout.write("  --verbose                   Include raw tool output\n");
   process.stdout.write("  --ruff-bin <name>           Ruff binary (default: ruff)\n");
   process.stdout.write("  --vulture-bin <name>        Vulture binary (default: vulture)\n");
   process.stdout.write("  --biome-bin <name>          Biome binary (default: biome)\n");
   process.stdout.write("  --knip-bin <name>           Knip binary (default: knip)\n");
   process.stdout.write("  --json                      Alias for --output json\n");
-  process.stdout.write("  --output <mode>             text | json (default: text)\n\n");
+  process.stdout.write("  --sarif                     Alias for --output sarif\n");
+  process.stdout.write("  --output <mode>             text | json | sarif (default: text)\n\n");
+
+  process.stdout.write("Doctor options:\n");
+  process.stdout.write("  --strict                    Exit 1 if any tools missing\n\n");
 
   process.stdout.write("Install options:\n");
   process.stdout.write("  --language <mode>           auto | python | typescript | all\n");
-  process.stdout.write("  --method <method>           auto | uv | pipx | pip | npm\n");
+  process.stdout.write("  --method <method>           auto | uv | pipx | pip | npm | bun\n");
   process.stdout.write("  --json                      Alias for --output json\n\n");
 
   process.stdout.write("Init options:\n");
@@ -114,14 +141,26 @@ function printHelp(): void {
   process.stdout.write("  --force                     Overwrite existing generated files\n");
   process.stdout.write("  --json                      Alias for --output json\n\n");
 
+  process.stdout.write("Config file:\n");
+  process.stdout.write("  Supports .deadclean.json or deadclean.json in project root.\n");
+  process.stdout.write("  CLI args take precedence over config file values.\n\n");
+
   process.stdout.write("Examples:\n");
   process.stdout.write("  deadclean . --fix\n");
   process.stdout.write("  deadclean ./apps/web --language typescript --strict\n");
   process.stdout.write("  deadclean ./apps/web --language typescript --workspace web --max-findings 50\n");
   process.stdout.write("  deadclean ./services --language python --ensure-tools\n");
+  process.stdout.write("  deadclean . --language all\n");
+  process.stdout.write("  deadclean . --diff-base main\n");
+  process.stdout.write("  deadclean . --staged\n");
+  process.stdout.write("  deadclean . --summary\n");
+  process.stdout.write("  deadclean . --output sarif --output-file results.sarif\n");
+  process.stdout.write("  deadclean baseline save . --language python\n");
+  process.stdout.write("  deadclean baseline check . --language python\n");
   process.stdout.write("  deadclean init . --language all\n");
   process.stdout.write("  deadclean install-tools . --language all --method auto\n");
   process.stdout.write("  deadclean doctor --json\n");
+  process.stdout.write("  deadclean doctor --strict\n");
 }
 
 function fail(message: string): never {
@@ -150,8 +189,8 @@ function parseInstallLanguage(value: string): LanguageMode | "all" {
 }
 
 function parseOutput(value: string): OutputMode {
-  if (value !== "text" && value !== "json") {
-    fail(`Invalid output mode '${value}'. Expected: text | json`);
+  if (value !== "text" && value !== "json" && value !== "sarif") {
+    fail(`Invalid output mode '${value}'. Expected: text | json | sarif`);
   }
   return value;
 }
@@ -178,6 +217,11 @@ function parseBaseOptions(args: string[]): BaseOptions {
 
     if (arg === "--json") {
       options.output = "json";
+      continue;
+    }
+
+    if (arg === "--sarif") {
+      options.output = "sarif";
       continue;
     }
 
@@ -300,6 +344,51 @@ function parseScanOptions(args: string[]): ScanOptions {
       continue;
     }
 
+    if (arg === "--ruff-arg") {
+      options.ruffArgs.push(consumeValue(args, i, arg));
+      i += 1;
+      continue;
+    }
+
+    if (arg === "--vulture-arg") {
+      options.vultureArgs.push(consumeValue(args, i, arg));
+      i += 1;
+      continue;
+    }
+
+    if (arg === "--exclude") {
+      options.exclude.push(consumeValue(args, i, arg));
+      i += 1;
+      continue;
+    }
+
+    if (arg === "--output-file") {
+      options.outputFile = consumeValue(args, i, arg);
+      i += 1;
+      continue;
+    }
+
+    if (arg === "--fix-rounds") {
+      const value = Number(consumeValue(args, i, arg));
+      if (!Number.isInteger(value) || value < 0) {
+        fail("--fix-rounds must be an integer >= 0");
+      }
+      options.fixRounds = value;
+      i += 1;
+      continue;
+    }
+
+    if (arg === "--diff-base") {
+      options.diffBase = consumeValue(args, i, arg);
+      i += 1;
+      continue;
+    }
+
+    if (arg === "--staged") {
+      options.staged = true;
+      continue;
+    }
+
     if (arg === "--strict") {
       options.strict = true;
       continue;
@@ -307,6 +396,16 @@ function parseScanOptions(args: string[]): ScanOptions {
 
     if (arg === "--strict-lint") {
       options.strictLint = true;
+      continue;
+    }
+
+    if (arg === "--summary") {
+      options.summary = true;
+      continue;
+    }
+
+    if (arg === "--quiet") {
+      options.quiet = true;
       continue;
     }
 
@@ -327,13 +426,21 @@ function parseScanOptions(args: string[]): ScanOptions {
       arg === "--workspace" ||
       arg === "--directory" ||
       arg === "--knip-arg" ||
-      arg === "--biome-arg"
+      arg === "--biome-arg" ||
+      arg === "--ruff-arg" ||
+      arg === "--vulture-arg" ||
+      arg === "--exclude" ||
+      arg === "--output-file" ||
+      arg === "--fix-rounds" ||
+      arg === "--diff-base" ||
+      arg === "--install-method" ||
+      arg === "--min-confidence"
     ) {
       i += 1;
       continue;
     }
 
-    if (arg === "--json") {
+    if (arg === "--json" || arg === "--sarif") {
       continue;
     }
 
@@ -388,7 +495,7 @@ function parseInitOptions(args: string[]): InitOptions {
       continue;
     }
 
-    if (arg === "--json") {
+    if (arg === "--json" || arg === "--sarif") {
       continue;
     }
 
@@ -444,7 +551,7 @@ function parseInstallOptions(args: string[]): InstallOptions {
       continue;
     }
 
-    if (arg === "--json") {
+    if (arg === "--json" || arg === "--sarif") {
       continue;
     }
 
@@ -476,7 +583,20 @@ async function resolveInstallLanguages(path: string, language: InstallOptions["l
   return [language];
 }
 
+function writeOutput(content: string, filePath: string | null): void {
+  if (filePath) {
+    writeFileSync(filePath, content, "utf8");
+  } else {
+    process.stdout.write(content);
+  }
+}
+
 async function runInstallTools(args: string[]): Promise<number> {
+  if (hasHelpFlag(args)) {
+    printHelp();
+    return 0;
+  }
+
   const options = parseInstallOptions(args);
   const runner = new RealCommandRunner();
   const absolutePath = resolve(options.path);
@@ -520,30 +640,40 @@ async function runInstallTools(args: string[]): Promise<number> {
 }
 
 async function runScanCommand(args: string[]): Promise<number> {
-  const options = parseScanOptions(args);
-  const runner = new RealCommandRunner();
-  const report = await runScan(runner, options);
-
-  if (options.output === "json") {
-    process.stdout.write(formatScanJson(report, options.verbose));
-  } else {
-    process.stdout.write(formatScanText(report));
-  }
-
-  const hasOperationalErrors = report.toolErrors.length > 0 || report.executionErrors.length > 0;
-  if (hasOperationalErrors) {
-    return 2;
-  }
-
-  if (!options.strict) {
+  if (hasHelpFlag(args)) {
+    printHelp();
     return 0;
   }
 
-  const lintFailure = options.strictLint ? report.lintIssueCount > 0 : false;
-  return report.deadCodeFindingCount > 0 || lintFailure ? 1 : 0;
+  const options = parseScanOptions(args);
+  const absolutePath = resolve(options.path);
+
+  const config = await loadConfig(absolutePath);
+  const mergedOptions = mergeConfigWithDefaults(options, config);
+
+  const runner = new RealCommandRunner();
+  const report = await runScan(runner, mergedOptions);
+
+  let output: string;
+  if (mergedOptions.output === "sarif") {
+    output = formatScanSarif(report);
+  } else if (mergedOptions.output === "json") {
+    output = formatScanJson(report, mergedOptions.verbose);
+  } else {
+    output = formatScanText(report, mergedOptions.quiet, mergedOptions.summary);
+  }
+
+  writeOutput(output, mergedOptions.outputFile);
+
+  return report.exitCode;
 }
 
 async function runInitCommand(args: string[]): Promise<number> {
+  if (hasHelpFlag(args)) {
+    printHelp();
+    return 0;
+  }
+
   const options = parseInitOptions(args);
   const report = await runInit({
     path: options.path,
@@ -562,16 +692,143 @@ async function runInitCommand(args: string[]): Promise<number> {
 }
 
 async function runDoctorCommand(args: string[]): Promise<number> {
-  const options = parseBaseOptions(args);
-  const report = await runDoctor(options);
+  if (hasHelpFlag(args)) {
+    printHelp();
+    return 0;
+  }
 
-  if (options.output === "json") {
+  const baseOptions = parseBaseOptions(args);
+  const strict = args.includes("--strict");
+  const report = await runDoctor(baseOptions, strict);
+
+  if (baseOptions.output === "json") {
     process.stdout.write(formatJson(report));
   } else {
     process.stdout.write(formatDoctorText(report));
   }
 
+  if (strict && !report.ready) {
+    return 1;
+  }
+
   return 0;
+}
+
+async function runBaselineSave(args: string[]): Promise<number> {
+  const scanOptions = parseScanOptions(args);
+  const absolutePath = resolve(scanOptions.path);
+
+  const config = await loadConfig(absolutePath);
+  const mergedOptions = mergeConfigWithDefaults(scanOptions, config);
+
+  const runner = new RealCommandRunner();
+  const report = await runScan(runner, mergedOptions);
+
+  const baselinePath = resolve(absolutePath, ".deadclean-baseline.json");
+  const baseline = {
+    timestamp: new Date().toISOString(),
+    path: report.path,
+    language: report.language,
+    deadCodeFindingCount: report.deadCodeFindingCount,
+    deadCodeFindings: report.deadCodeFindings,
+    deadCodeFindingsStructured: report.deadCodeFindingsStructured
+  };
+
+  writeFileSync(baselinePath, JSON.stringify(baseline, null, 2) + "\n", "utf8");
+
+  if (scanOptions.output === "json") {
+    process.stdout.write(formatJson({
+      action: "baseline_save",
+      path: baselinePath,
+      findingsCount: report.deadCodeFindingCount,
+      timestamp: baseline.timestamp
+    }));
+  } else {
+    process.stdout.write(`Baseline saved to ${baselinePath}\n`);
+    process.stdout.write(`Findings recorded: ${report.deadCodeFindingCount}\n`);
+  }
+
+  return 0;
+}
+
+async function runBaselineCheck(args: string[]): Promise<number> {
+  const scanOptions = parseScanOptions(args);
+  const absolutePath = resolve(scanOptions.path);
+
+  const config = await loadConfig(absolutePath);
+  const mergedOptions = mergeConfigWithDefaults(scanOptions, config);
+
+  const baselinePath = resolve(absolutePath, ".deadclean-baseline.json");
+
+  if (!existsSync(baselinePath)) {
+    process.stderr.write("No baseline found. Run 'deadclean baseline save' first.\n");
+    return 2;
+  }
+
+  const baselineRaw = readFileSync(baselinePath, "utf8");
+  const baseline = JSON.parse(baselineRaw) as { deadCodeFindings: string[]; timestamp: string; deadCodeFindingCount: number };
+
+  const runner = new RealCommandRunner();
+  const report = await runScan(runner, mergedOptions);
+
+  const baselineSet = new Set(baseline.deadCodeFindings);
+  const newFindings = report.deadCodeFindings.filter((f) => !baselineSet.has(f));
+
+  const result = {
+    action: "baseline_check",
+    baselineTimestamp: baseline.timestamp,
+    currentFindings: report.deadCodeFindingCount,
+    baselineFindings: baseline.deadCodeFindingCount,
+    newFindingsCount: newFindings.length,
+    newFindings,
+    hasNewFindings: newFindings.length > 0
+  };
+
+  if (scanOptions.output === "json") {
+    process.stdout.write(formatJson(result));
+  } else {
+    process.stdout.write("deadclean baseline check\n");
+    process.stdout.write(`baseline: ${baseline.timestamp}\n`);
+    process.stdout.write(`current: ${report.deadCodeFindingCount} findings\n`);
+    process.stdout.write(`baseline: ${baseline.deadCodeFindingCount} findings\n`);
+    process.stdout.write(`new: ${newFindings.length} findings\n`);
+
+    if (newFindings.length > 0) {
+      process.stdout.write("new findings:\n");
+      for (const f of newFindings) {
+        process.stdout.write(`  - ${f}\n`);
+      }
+    }
+  }
+
+  if (mergedOptions.strict && newFindings.length > 0) {
+    return 1;
+  }
+
+  return 0;
+}
+
+async function runBaselineCommand(subArgs: string[]): Promise<number> {
+  if (subArgs.length === 0 || hasHelpFlag(subArgs)) {
+    printHelp();
+    return 0;
+  }
+
+  const [action, ...rest] = subArgs;
+
+  if (action === "save") {
+    return runBaselineSave(rest);
+  }
+
+  if (action === "check") {
+    return runBaselineCheck(rest);
+  }
+
+  fail(`Unknown baseline action '${action}'. Expected: save | check`);
+}
+
+function hasHelpFlag(args: string[]): boolean {
+  return args.includes("--help") || args.includes("-h");
 }
 
 export async function runCli(argv: string[]): Promise<number> {
@@ -605,6 +862,10 @@ export async function runCli(argv: string[]): Promise<number> {
 
   if (first === "install-tools") {
     return runInstallTools(rest);
+  }
+
+  if (first === "baseline") {
+    return runBaselineCommand(rest);
   }
 
   return runScanCommand(argv);

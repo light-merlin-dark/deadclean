@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runInit } from "../src/init";
@@ -39,7 +39,7 @@ describe("init", () => {
   test("respects force for existing files", async () => {
     const root = makeTempRoot();
     const knipPath = join(root, "knip.json");
-    writeFileSync(knipPath, "{\n  \"entry\": []\n}\n", "utf8");
+    writeFileSync(knipPath, '{\n  "entry": []\n}\n', "utf8");
 
     const first = await runInit({
       path: root,
@@ -56,5 +56,31 @@ describe("init", () => {
       output: "text"
     });
     expect(second.artifacts.knipConfig?.overwritten).toBe(true);
+  });
+
+  test("creates only knip.json for typescript", async () => {
+    const root = makeTempRoot();
+    const report = await runInit({
+      path: root,
+      language: "typescript",
+      force: false,
+      output: "json"
+    });
+
+    expect(report.artifacts.knipConfig?.created).toBe(true);
+    expect(report.artifacts.vultureIgnore).toBeNull();
+  });
+
+  test("creates only .vulture_ignore for python", async () => {
+    const root = makeTempRoot();
+    const report = await runInit({
+      path: root,
+      language: "python",
+      force: false,
+      output: "json"
+    });
+
+    expect(report.artifacts.knipConfig).toBeNull();
+    expect(report.artifacts.vultureIgnore?.created).toBe(true);
   });
 });

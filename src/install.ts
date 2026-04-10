@@ -276,6 +276,34 @@ async function ensurePythonToolsInstalled(
   };
 }
 
+async function tryNpxInstall(runner: CommandRunner, packages: string[]): Promise<InstallAttempt> {
+  const npxCheck = await runner.run("npx", ["--version"]);
+  if (!isSuccess(npxCheck)) {
+    return { method: "npm", success: false, details: "npx is not available" };
+  }
+
+  const result = await runner.run("npm", ["install", "-g", ...packages]);
+  return {
+    method: "npm",
+    success: isSuccess(result),
+    details: isSuccess(result) ? `Installed ${packages.join(", ")} using npm` : displayOutput(result)
+  };
+}
+
+async function tryBunInstall(runner: CommandRunner, packages: string[]): Promise<InstallAttempt> {
+  const bunCheck = await runner.run("bun", ["--version"]);
+  if (!isSuccess(bunCheck)) {
+    return { method: "bun", success: false, details: "bun is not installed" };
+  }
+
+  const result = await runner.run("bun", ["install", "-g", ...packages]);
+  return {
+    method: "bun",
+    success: isSuccess(result),
+    details: isSuccess(result) ? `Installed ${packages.join(", ")} using bun` : displayOutput(result)
+  };
+}
+
 async function ensureTypeScriptToolsInstalled(
   runner: CommandRunner,
   method: InstallMethod,
@@ -298,7 +326,44 @@ async function ensureTypeScriptToolsInstalled(
     };
   }
 
-  if (method !== "auto" && method !== "npm") {
+  const packages = ["@biomejs/biome", "knip"];
+  const attempts: InstallAttempt[] = [];
+
+  if (method === "bun" || method === "auto") {
+    const bunAttempt = await tryBunInstall(runner, packages);
+    attempts.push(bunAttempt);
+    if (bunAttempt.success) {
+      const postCheck = await inspectLanguageTools(runner, "typescript", binaries);
+      if (postCheck.every((tool) => tool.installed)) {
+        return {
+          language: "typescript",
+          success: true,
+          methodRequested: method,
+          methodUsed: "bun",
+          attempts
+        };
+      }
+    }
+  }
+
+  if (method === "auto" || method === "npm") {
+    const npmAttempt = await tryNpxInstall(runner, packages);
+    attempts.push(npmAttempt);
+    if (npmAttempt.success) {
+      const postCheck = await inspectLanguageTools(runner, "typescript", binaries);
+      if (postCheck.every((tool) => tool.installed)) {
+        return {
+          language: "typescript",
+          success: true,
+          methodRequested: method,
+          methodUsed: "npm",
+          attempts
+        };
+      }
+    }
+  }
+
+  if (method !== "auto" && method !== "npm" && method !== "bun") {
     return {
       language: "typescript",
       success: false,
@@ -308,54 +373,9 @@ async function ensureTypeScriptToolsInstalled(
         {
           method,
           success: false,
-          details: "TypeScript tool installation supports only auto or npm."
+          details: "TypeScript tool installation supports only auto, npm, or bun."
         }
       ]
-    };
-  }
-
-  const npmCheck = await runner.run("npm", ["--version"]);
-  if (!isSuccess(npmCheck)) {
-    return {
-      language: "typescript",
-      success: false,
-      methodRequested: method,
-      methodUsed: null,
-      attempts: [
-        {
-          method: "npm",
-          success: false,
-          details: "npm is not installed"
-        }
-      ]
-    };
-  }
-
-  const installResult = await runner.run("npm", ["install", "-g", "@biomejs/biome", "knip"]);
-  const attempt: InstallAttempt = {
-    method: "npm",
-    success: installResult.exitCode === 0,
-    details: installResult.exitCode === 0 ? "Installed Biome and Knip using npm" : displayOutput(installResult)
-  };
-
-  if (!attempt.success) {
-    return {
-      language: "typescript",
-      success: false,
-      methodRequested: method,
-      methodUsed: null,
-      attempts: [attempt]
-    };
-  }
-
-  const postCheck = await inspectLanguageTools(runner, "typescript", binaries);
-  if (postCheck.every((tool) => tool.installed)) {
-    return {
-      language: "typescript",
-      success: true,
-      methodRequested: method,
-      methodUsed: "npm",
-      attempts: [attempt]
     };
   }
 
@@ -364,14 +384,7 @@ async function ensureTypeScriptToolsInstalled(
     success: false,
     methodRequested: method,
     methodUsed: null,
-    attempts: [
-      attempt,
-      {
-        method: "npm",
-        success: false,
-        details: "Install command succeeded but tools are still unavailable in PATH"
-      }
-    ]
+    attempts
   };
 }
 
