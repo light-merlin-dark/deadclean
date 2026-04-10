@@ -52,6 +52,8 @@ export function formatScanText(report: ScanReport): string {
   lines.push(`lint_issues: ${report.lintIssueCount}`);
   lines.push(`auto_fixed: ${report.fixedCount}`);
   lines.push(`dead_code_findings: ${report.deadCodeFindingCount}`);
+  lines.push(`dead_code_shown: ${report.displayedDeadCodeFindingCount}`);
+  lines.push(`findings_truncated: ${report.findingsTruncated}`);
   lines.push(`elapsed_ms: ${report.elapsedMs}`);
 
   lines.push(...formatInstallReport(report.install));
@@ -61,9 +63,26 @@ export function formatScanText(report: ScanReport): string {
     for (const finding of report.deadCodeFindings) {
       lines.push(`  - ${finding}`);
     }
+    if (report.findingsTruncated) {
+      lines.push(`  - ... truncated ${report.deadCodeFindingCount - report.displayedDeadCodeFindingCount} findings`);
+    }
   } else {
     lines.push("dead_code_report:");
     lines.push("  - none");
+  }
+
+  if (report.toolErrors.length > 0) {
+    lines.push("tool_errors:");
+    for (const error of report.toolErrors) {
+      lines.push(`  - ${error}`);
+    }
+  }
+
+  if (report.executionErrors.length > 0) {
+    lines.push("execution_errors:");
+    for (const error of report.executionErrors) {
+      lines.push(`  - ${error}`);
+    }
   }
 
   if (report.options.verbose) {
@@ -76,6 +95,7 @@ export function formatScanText(report: ScanReport): string {
   lines.push("next:");
   lines.push("  - Review dead-code findings before deleting code.");
   lines.push("  - Use --strict in CI to fail on remaining findings.");
+  lines.push("  - Resolve tool/execution errors before trusting findings.");
 
   return `${lines.join("\n")}\n`;
 }
@@ -109,16 +129,27 @@ export function formatScanJson(report: ScanReport, verbose: boolean): string {
       language: report.options.language,
       fix: report.options.fix,
       minConfidence: report.options.minConfidence,
+      maxFindings: report.options.maxFindings,
       ensureTools: report.options.ensureTools,
       installMethod: report.options.installMethod,
       strict: report.options.strict,
-      strictLint: report.options.strictLint
+      strictLint: report.options.strictLint,
+      knipConfig: report.options.knipConfig,
+      workspaces: report.options.workspaces,
+      directory: report.options.directory,
+      knipArgs: report.options.knipArgs,
+      biomeArgs: report.options.biomeArgs
     }
   };
 
   if (report.install) {
     payload.install = report.install;
   }
+
+  payload.displayedDeadCodeFindingCount = report.displayedDeadCodeFindingCount;
+  payload.findingsTruncated = report.findingsTruncated;
+  payload.toolErrors = report.toolErrors;
+  payload.executionErrors = report.executionErrors;
 
   if (verbose) {
     payload.fixResult = report.fixResult ? summarizeCommandResult(report.fixResult) : null;

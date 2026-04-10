@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2026-04-10
+- Added fail-fast validation for invalid scan paths.
+- Separated dead-code findings from operational failures via `toolErrors` and `executionErrors`.
+- Switched TypeScript dead-code parsing to Knip JSON reporter for robust, structured findings.
+- Added `--max-findings` cap with truncation metadata for context-efficient agent output.
+- Added monorepo controls: `--knip-config`, repeatable `--workspace`, `--directory`, `--knip-arg`, and `--biome-arg`.
+- Added `deadclean init` to scaffold `knip.json` and `.vulture_ignore` baselines.
+- Added `.vulture_ignore` support in Python scans through Vulture `--exclude`.
+- Removed duplicate root skill file and kept canonical skill at `skills/deadclean/SKILL.md`.
+- Ignored `docs/` and `scripts/` directories and removed tracked docs from git history going forward.
+- Expanded test suite to cover init flow, Knip JSON parsing, path validation, and findings capping.
+
 ## [0.2.0] - 2026-04-09
 - Added TypeScript support with Biome + Knip toolchain.
 - Added language auto-detection (`python` and `typescript`).

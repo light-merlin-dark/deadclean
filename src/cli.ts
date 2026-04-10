@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { runDoctor } from "./doctor";
 import { formatDoctorText, formatJson, formatScanJson, formatScanText } from "./format";
+import { formatInitText, runInit } from "./init";
 import { ensureToolsInstalled } from "./install";
 import { detectProjectLanguage } from "./language";
 import { RealCommandRunner } from "./process";
@@ -29,17 +30,29 @@ interface InstallOptions extends BaseOptions {
   path: string;
 }
 
+interface InitOptions extends BaseOptions {
+  language: LanguageMode | "all";
+  force: boolean;
+  path: string;
+}
+
 const DEFAULT_SCAN_OPTIONS: ScanOptions = {
   path: ".",
   language: "auto",
   fix: false,
   minConfidence: 100,
+  maxFindings: 200,
   ensureTools: false,
   installMethod: "auto",
   output: "text",
   strict: false,
   strictLint: false,
   verbose: false,
+  knipConfig: null,
+  workspaces: [],
+  directory: null,
+  knipArgs: [],
+  biomeArgs: [],
   ruffBinary: "ruff",
   vultureBinary: "vulture",
   biomeBinary: "biome",
@@ -60,19 +73,27 @@ function printHelp(): void {
   process.stdout.write("  deadclean [path] [options]\n");
   process.stdout.write("  deadclean scan [path] [options]\n");
   process.stdout.write("  deadclean doctor [options]\n");
+  process.stdout.write("  deadclean init [path] [options]\n");
   process.stdout.write("  deadclean install-tools [path] [options]\n\n");
 
   process.stdout.write("Commands:\n");
   process.stdout.write("  scan           Run language-aware scan (default command)\n");
   process.stdout.write("  doctor         Show runtime and tool availability\n");
+  process.stdout.write("  init           Create starter knip.json and .vulture_ignore files\n");
   process.stdout.write("  install-tools  Install required tools for Python/TypeScript\n\n");
 
   process.stdout.write("Scan options:\n");
   process.stdout.write("  --language <mode>           auto | python | typescript (default: auto)\n");
   process.stdout.write("  --fix                       Apply safe auto-fixes first\n");
   process.stdout.write("  --min-confidence <0-100>    Vulture threshold for Python scans\n");
+  process.stdout.write("  --max-findings <n>          Cap reported findings (default: 200, use '0' for no cap)\n");
   process.stdout.write("  --ensure-tools              Install missing tools before scan\n");
   process.stdout.write("  --install-method <method>   auto | uv | pipx | pip | npm\n");
+  process.stdout.write("  --knip-config <path>        Knip config file path\n");
+  process.stdout.write("  --workspace <filter>        Knip workspace filter (repeatable)\n");
+  process.stdout.write("  --directory <path>          Knip directory scope relative to project root\n");
+  process.stdout.write("  --knip-arg <arg>            Extra Knip arg (repeatable)\n");
+  process.stdout.write("  --biome-arg <arg>           Extra Biome lint arg (repeatable)\n");
   process.stdout.write("  --strict                    Exit non-zero if dead-code findings remain\n");
   process.stdout.write("  --strict-lint               Include lint findings in strict exit behavior\n");
   process.stdout.write("  --verbose                   Include raw tool output\n");
@@ -88,10 +109,17 @@ function printHelp(): void {
   process.stdout.write("  --method <method>           auto | uv | pipx | pip | npm\n");
   process.stdout.write("  --json                      Alias for --output json\n\n");
 
+  process.stdout.write("Init options:\n");
+  process.stdout.write("  --language <mode>           auto | python | typescript | all\n");
+  process.stdout.write("  --force                     Overwrite existing generated files\n");
+  process.stdout.write("  --json                      Alias for --output json\n\n");
+
   process.stdout.write("Examples:\n");
   process.stdout.write("  deadclean . --fix\n");
   process.stdout.write("  deadclean ./apps/web --language typescript --strict\n");
+  process.stdout.write("  deadclean ./apps/web --language typescript --workspace web --max-findings 50\n");
   process.stdout.write("  deadclean ./services --language python --ensure-tools\n");
+  process.stdout.write("  deadclean init . --language all\n");
   process.stdout.write("  deadclean install-tools . --language all --method auto\n");
   process.stdout.write("  deadclean doctor --json\n");
 }
@@ -221,6 +249,16 @@ function parseScanOptions(args: string[]): ScanOptions {
       continue;
     }
 
+    if (arg === "--max-findings") {
+      const value = Number(consumeValue(args, i, arg));
+      if (!Number.isInteger(value) || value < 0) {
+        fail("--max-findings must be an integer >= 0");
+      }
+      options.maxFindings = value === 0 ? null : value;
+      i += 1;
+      continue;
+    }
+
     if (arg === "--ensure-tools") {
       options.ensureTools = true;
       continue;
@@ -228,6 +266,36 @@ function parseScanOptions(args: string[]): ScanOptions {
 
     if (arg === "--install-method") {
       options.installMethod = parseInstallMethod(consumeValue(args, i, arg));
+      i += 1;
+      continue;
+    }
+
+    if (arg === "--knip-config") {
+      options.knipConfig = consumeValue(args, i, arg);
+      i += 1;
+      continue;
+    }
+
+    if (arg === "--workspace") {
+      options.workspaces.push(consumeValue(args, i, arg));
+      i += 1;
+      continue;
+    }
+
+    if (arg === "--directory") {
+      options.directory = consumeValue(args, i, arg);
+      i += 1;
+      continue;
+    }
+
+    if (arg === "--knip-arg") {
+      options.knipArgs.push(consumeValue(args, i, arg));
+      i += 1;
+      continue;
+    }
+
+    if (arg === "--biome-arg") {
+      options.biomeArgs.push(consumeValue(args, i, arg));
       i += 1;
       continue;
     }
@@ -253,7 +321,68 @@ function parseScanOptions(args: string[]): ScanOptions {
       arg === "--vulture-bin" ||
       arg === "--biome-bin" ||
       arg === "--knip-bin" ||
-      arg === "--language"
+      arg === "--language" ||
+      arg === "--max-findings" ||
+      arg === "--knip-config" ||
+      arg === "--workspace" ||
+      arg === "--directory" ||
+      arg === "--knip-arg" ||
+      arg === "--biome-arg"
+    ) {
+      i += 1;
+      continue;
+    }
+
+    if (arg === "--json") {
+      continue;
+    }
+
+    if (arg.startsWith("-")) {
+      fail(`Unknown option '${arg}'`);
+    }
+
+    if (pathSeen) {
+      fail(`Unexpected argument '${arg}'`);
+    }
+
+    options.path = arg;
+    pathSeen = true;
+  }
+
+  return options;
+}
+
+function parseInitOptions(args: string[]): InitOptions {
+  const base = parseBaseOptions(args);
+  const options: InitOptions = {
+    ...base,
+    language: "all",
+    force: false,
+    path: "."
+  };
+
+  let pathSeen = false;
+
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+
+    if (arg === "--language") {
+      options.language = parseInstallLanguage(consumeValue(args, i, arg));
+      i += 1;
+      continue;
+    }
+
+    if (arg === "--force") {
+      options.force = true;
+      continue;
+    }
+
+    if (
+      arg === "--output" ||
+      arg === "--ruff-bin" ||
+      arg === "--vulture-bin" ||
+      arg === "--biome-bin" ||
+      arg === "--knip-bin"
     ) {
       i += 1;
       continue;
@@ -401,12 +530,35 @@ async function runScanCommand(args: string[]): Promise<number> {
     process.stdout.write(formatScanText(report));
   }
 
+  const hasOperationalErrors = report.toolErrors.length > 0 || report.executionErrors.length > 0;
+  if (hasOperationalErrors) {
+    return 2;
+  }
+
   if (!options.strict) {
     return 0;
   }
 
   const lintFailure = options.strictLint ? report.lintIssueCount > 0 : false;
   return report.deadCodeFindingCount > 0 || lintFailure ? 1 : 0;
+}
+
+async function runInitCommand(args: string[]): Promise<number> {
+  const options = parseInitOptions(args);
+  const report = await runInit({
+    path: options.path,
+    language: options.language,
+    force: options.force,
+    output: options.output
+  });
+
+  if (options.output === "json") {
+    process.stdout.write(formatJson(report));
+  } else {
+    process.stdout.write(formatInitText(report));
+  }
+
+  return 0;
 }
 
 async function runDoctorCommand(args: string[]): Promise<number> {
@@ -445,6 +597,10 @@ export async function runCli(argv: string[]): Promise<number> {
 
   if (first === "doctor") {
     return runDoctorCommand(rest);
+  }
+
+  if (first === "init") {
+    return runInitCommand(rest);
   }
 
   if (first === "install-tools") {

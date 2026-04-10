@@ -1,6 +1,6 @@
 {
   "name": "@light-merlin-dark/deadclean",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "AI-friendly CLI wrapper for dead code cleanup in Python and TypeScript projects.",
   "main": "dist/index.js",
   "bin": {
@@ -52,8 +52,7 @@
     "dist",
     "README.md",
     "LICENSE",
-    "SKILL.md",
-    "docs"
+    "skills/deadclean/SKILL.md"
   ],
   "publishConfig": {
     "access": "public",

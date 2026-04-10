@@ -26,10 +26,9 @@ __pycache__/
 .ruff_cache/
 .vulture/
 
-# docs local artifacts (keep docs content tracked)
-docs/.cache/
-docs/.tmp/
-docs/_site/
+# local docs and scripts
+docs/
+scripts/
 
 # temporary
 .tmp/

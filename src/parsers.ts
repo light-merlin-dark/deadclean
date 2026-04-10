@@ -6,6 +6,39 @@ const RUFF_PATH_LINE_PATTERN = /^.+:\d+:\d+:/;
 const BIOME_SUMMARY_PATTERN = /Found\s+(\d+)\s+(error|errors|diagnostic|diagnostics)/i;
 const BIOME_FIXED_PATTERN = /Applied\s+(\d+)\s+fix(?:es)?/i;
 
+const KNIP_CATEGORY_LABELS: Record<string, string> = {
+  files: "files",
+  dependencies: "dependencies",
+  devDependencies: "devDependencies",
+  optionalPeerDependencies: "optionalPeerDependencies",
+  unresolved: "unresolved",
+  unlisted: "unlisted",
+  binaries: "binaries",
+  exports: "exports",
+  nsExports: "nsExports",
+  types: "types",
+  nsTypes: "nsTypes",
+  enumMembers: "enumMembers",
+  namespaceMembers: "namespaceMembers",
+  duplicates: "duplicates",
+  catalog: "catalog"
+};
+
+interface KnipIssue {
+  file?: string;
+  [key: string]: unknown;
+}
+
+interface KnipJsonPayload {
+  issues?: KnipIssue[];
+}
+
+export interface KnipParseResult {
+  findings: string[];
+  preludeWarnings: string[];
+  parsingErrors: string[];
+}
+
 export function parseRuffIssueCount(result: CommandResult): number {
   const output = `${result.stdout}\n${result.stderr}`;
   const summaryMatch = output.match(RUFF_SUMMARY_PATTERN);
@@ -99,16 +132,108 @@ export function parseBiomeFixedCount(result: CommandResult): number {
   return 0;
 }
 
-export function parseKnipFindings(result: CommandResult): string[] {
-  const output = `${result.stdout}\n${result.stderr}`.trim();
-  if (!output) {
-    return [];
+function tryParseKnipPayload(output: string): { payload: KnipJsonPayload | null; prelude: string } {
+  const trimmed = output.trim();
+  if (!trimmed) {
+    return { payload: null, prelude: "" };
   }
 
-  return output
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .filter((line) => !line.startsWith("Unused"))
-    .filter((line) => !line.startsWith("Configuration hints"));
+  try {
+    return {
+      payload: JSON.parse(trimmed) as KnipJsonPayload,
+      prelude: ""
+    };
+  } catch {
+    // Continue with best-effort extraction below.
+  }
+
+  const lines = trimmed.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i += 1) {
+    const candidate = lines.slice(i).join("\n").trim();
+    if (!candidate.startsWith("{") && !candidate.startsWith("[")) {
+      continue;
+    }
+    try {
+      return {
+        payload: JSON.parse(candidate) as KnipJsonPayload,
+        prelude: lines
+          .slice(0, i)
+          .join("\n")
+          .trim()
+      };
+    } catch {
+      continue;
+    }
+  }
+
+  return { payload: null, prelude: trimmed };
+}
+
+function summarizeKnipIssue(issue: KnipIssue): string | null {
+  const file = typeof issue.file === "string" && issue.file.trim().length > 0 ? issue.file : "(unknown file)";
+  const parts: string[] = [];
+
+  for (const [key, label] of Object.entries(KNIP_CATEGORY_LABELS)) {
+    const value = issue[key];
+    if (!Array.isArray(value) || value.length === 0) {
+      continue;
+    }
+    parts.push(`${label}:${value.length}`);
+  }
+
+  if (parts.length === 0) {
+    return null;
+  }
+
+  return `${file} [${parts.join(", ")}]`;
+}
+
+export function parseKnipResult(result: CommandResult): KnipParseResult {
+  const stdout = result.stdout.trim();
+  const stderr = result.stderr.trim();
+  if (!stdout && !stderr) {
+    return {
+      findings: [],
+      preludeWarnings: [],
+      parsingErrors: []
+    };
+  }
+
+  const attempts = [
+    { candidate: stdout, trailingPrelude: stderr },
+    { candidate: stderr, trailingPrelude: stdout },
+    { candidate: `${stdout}\n${stderr}`.trim(), trailingPrelude: "" }
+  ];
+
+  for (const attempt of attempts) {
+    if (!attempt.candidate) {
+      continue;
+    }
+    const { payload, prelude } = tryParseKnipPayload(attempt.candidate);
+    if (!payload) {
+      continue;
+    }
+
+    const issues = Array.isArray(payload.issues) ? payload.issues : [];
+    const findings = issues
+      .map((issue) => summarizeKnipIssue(issue))
+      .filter((line): line is string => typeof line === "string");
+
+    const preludeWarnings = `${prelude}\n${attempt.trailingPrelude}`
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+
+    return {
+      findings,
+      preludeWarnings,
+      parsingErrors: []
+    };
+  }
+
+  return {
+    findings: [],
+    preludeWarnings: [],
+    parsingErrors: ["Unable to parse Knip JSON output"]
+  };
 }

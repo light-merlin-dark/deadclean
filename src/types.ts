@@ -61,12 +61,18 @@ export interface ScanOptions {
   language: LanguageMode;
   fix: boolean;
   minConfidence: number;
+  maxFindings: number | null;
   ensureTools: boolean;
   installMethod: InstallMethod;
   output: OutputMode;
   strict: boolean;
   strictLint: boolean;
   verbose: boolean;
+  knipConfig: string | null;
+  workspaces: string[];
+  directory: string | null;
+  knipArgs: string[];
+  biomeArgs: string[];
   ruffBinary: ToolBinaries["ruffBinary"];
   vultureBinary: ToolBinaries["vultureBinary"];
   biomeBinary: ToolBinaries["biomeBinary"];
@@ -86,7 +92,11 @@ export interface ScanReport {
   lintIssueCount: number;
   fixedCount: number;
   deadCodeFindingCount: number;
+  displayedDeadCodeFindingCount: number;
+  findingsTruncated: boolean;
   deadCodeFindings: string[];
+  toolErrors: string[];
+  executionErrors: string[];
   elapsedMs: number;
 }
 

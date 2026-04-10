@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   parseBiomeFixedCount,
   parseBiomeIssueCount,
-  parseKnipFindings,
+  parseKnipResult,
   parseRuffFixedCount,
   parseRuffIssueCount,
   parseVultureFindings
@@ -52,8 +52,48 @@ describe("parsers", () => {
     expect(parseBiomeFixedCount(result("Applied 3 fixes."))).toBe(3);
   });
 
-  test("parses Knip findings", () => {
-    const findings = parseKnipFindings(result("Unused files (1)\nsrc/a.ts\nsrc/b.ts: unused export"));
-    expect(findings).toEqual(["src/a.ts", "src/b.ts: unused export"]);
+  test("parses Knip JSON findings", () => {
+    const payload = JSON.stringify({
+      issues: [
+        {
+          file: "src/a.ts",
+          files: [{ name: "src/a.ts" }],
+          exports: [{ name: "unusedFn" }]
+        },
+        {
+          file: "package.json",
+          binaries: [{ name: "tsc" }]
+        }
+      ]
+    });
+
+    const parsed = parseKnipResult(result(payload, "", 1));
+    expect(parsed.parsingErrors).toEqual([]);
+    expect(parsed.findings).toEqual(["src/a.ts [files:1, exports:1]", "package.json [binaries:1]"]);
+  });
+
+  test("parses Knip JSON with prelude warning", () => {
+    const output = [
+      "Some plugin warning",
+      JSON.stringify({
+        issues: [
+          {
+            file: "src/a.ts",
+            files: [{ name: "src/a.ts" }]
+          }
+        ]
+      })
+    ].join("\n");
+
+    const parsed = parseKnipResult(result(output, "", 1));
+    expect(parsed.parsingErrors).toEqual([]);
+    expect(parsed.preludeWarnings).toEqual(["Some plugin warning"]);
+    expect(parsed.findings).toEqual(["src/a.ts [files:1]"]);
+  });
+
+  test("reports Knip parsing error when payload is not json", () => {
+    const parsed = parseKnipResult(result("not-json-output", "", 1));
+    expect(parsed.findings).toEqual([]);
+    expect(parsed.parsingErrors).toEqual(["Unable to parse Knip JSON output"]);
   });
 });

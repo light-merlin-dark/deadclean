@@ -51,8 +51,23 @@ class ScanRunner implements CommandRunner {
       return this.make(full, 0, "Checked 3 files in 4ms. No fixes applied.");
     }
 
-    if (full === "knip") {
-      return this.make(full, 1, "src/a.ts: unused export\nsrc/b.ts: unused file");
+    if (full.startsWith("knip ")) {
+      return this.make(
+        full,
+        1,
+        JSON.stringify({
+          issues: [
+            {
+              file: "src/a.ts",
+              exports: [{ name: "unusedExport" }]
+            },
+            {
+              file: "src/b.ts",
+              files: [{ name: "src/b.ts" }]
+            }
+          ]
+        })
+      );
     }
 
     return this.make(full, 1, "unexpected command");
@@ -75,12 +90,18 @@ const baseOptions: Omit<ScanOptions, "language"> = {
   path: ".",
   fix: true,
   minConfidence: 100,
+  maxFindings: 200,
   ensureTools: false,
   installMethod: "auto",
   output: "text",
   strict: false,
   strictLint: false,
   verbose: false,
+  knipConfig: null,
+  workspaces: [],
+  directory: null,
+  knipArgs: [],
+  biomeArgs: [],
   ruffBinary: "ruff",
   vultureBinary: "vulture",
   biomeBinary: "biome",
@@ -88,6 +109,16 @@ const baseOptions: Omit<ScanOptions, "language"> = {
 };
 
 describe("scan", () => {
+  test("fails fast on nonexistent path", async () => {
+    await expect(
+      runScan(new ScanRunner(), {
+        ...baseOptions,
+        path: "/tmp/deadclean-missing-path",
+        language: "python"
+      })
+    ).rejects.toThrow("Scan path does not exist");
+  });
+
   test("runs python scan and parses findings", async () => {
     const report = await runScan(new ScanRunner(), {
       ...baseOptions,
@@ -99,6 +130,8 @@ describe("scan", () => {
     expect(report.lintIssueCount).toBe(0);
     expect(report.deadCodeFindingCount).toBe(1);
     expect(report.deadCodeFindings[0]).toContain("sample.py");
+    expect(report.executionErrors).toHaveLength(0);
+    expect(report.toolErrors).toHaveLength(0);
   });
 
   test("runs typescript scan and parses findings", async () => {
@@ -111,5 +144,21 @@ describe("scan", () => {
     expect(report.fixedCount).toBe(2);
     expect(report.lintIssueCount).toBe(0);
     expect(report.deadCodeFindingCount).toBe(2);
+    expect(report.deadCodeFindings).toEqual(["src/a.ts [exports:1]", "src/b.ts [files:1]"]);
+    expect(report.executionErrors).toHaveLength(0);
+    expect(report.toolErrors).toHaveLength(0);
+  });
+
+  test("caps reported findings with max-findings", async () => {
+    const report = await runScan(new ScanRunner(), {
+      ...baseOptions,
+      language: "typescript",
+      maxFindings: 1
+    });
+
+    expect(report.deadCodeFindingCount).toBe(2);
+    expect(report.displayedDeadCodeFindingCount).toBe(1);
+    expect(report.findingsTruncated).toBe(true);
+    expect(report.deadCodeFindings).toHaveLength(1);
   });
 });
