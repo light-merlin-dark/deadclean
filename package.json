@@ -1,7 +1,7 @@
 {
   "name": "@light-merlin-dark/deadclean",
   "version": "0.3.0",
-  "description": "AI-friendly CLI wrapper for dead code cleanup in Python and TypeScript projects.",
+  "description": "One-command dead code cleanup for fast-moving software projects.",
   "main": "dist/index.js",
   "bin": {
     "deadclean": "dist/index.js"
